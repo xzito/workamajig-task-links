@@ -24,7 +24,7 @@ Tasks with no assignment slots only get the task link; add an assignment to get 
 
 To distribute to the team, install from the raw GitHub URL below. Tampermonkey auto-updates from the `@updateURL`/`@downloadURL` headers.
 
-Install link: https://raw.githubusercontent.com/xzito/workamajig-task-links/main/workamajig-task-links.user.js (private repo: open it while signed in to GitHub, or use the Tampermonkey paste method).
+Install link: https://raw.githubusercontent.com/xzito/workamajig-task-links/main/workamajig-task-links.user.js.
 
 ## Known limits
 - Only the Schedule grid is decorated. The Today / My Tasks views could be added the same way.
