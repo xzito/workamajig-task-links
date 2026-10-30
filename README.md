@@ -46,7 +46,7 @@ Uses the free Chrome extension **User JavaScript and CSS** plus the 11-line `loa
 Troubleshooting:
 - No button: check the rule is enabled for `app20.workamajig.com` (the toggle in the extension popup) and that the URL pattern matches.
 - Button but "No assignment slots" on every task: the extension is sandboxing the script. Make sure it injects into the page context (default), not an isolated one.
-- Need a change immediately rather than within 12 hours: open the jsDelivr URL inside `loader.js` once with `?purge` or use the Tampermonkey install below.
+- Need a change immediately rather than within 12 hours: open `https://purge.jsdelivr.net/gh/xzito/workamajig-task-links@main/workamajig-task-links.user.js` once to clear the CDN cache, or use the Tampermonkey install below.
 
 ## Install – alternative (Tampermonkey / Violentmonkey)
 1. Install Tampermonkey in Chrome.
