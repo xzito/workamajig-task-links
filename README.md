@@ -30,6 +30,9 @@ Tasks with no assignment slots only get the task link; add an assignment to get 
 - It never modifies the grid's own DOM (doing so makes the grid re-render in a loop); the button and menu are fixed-position overlays.
 - Workamajig rewrites the URL on load and drops the `#task=` hash, so the script runs at `document-start`, stashes the hash in `sessionStorage`, and applies it once the grid renders.
 
+## Install (User JavaScript and CSS extension, auto-updating)
+Create a rule for `https://app20.workamajig.com/*`, paste the contents of `loader.js` into the JavaScript pane, and save. The loader fetches the current script from jsDelivr (a CDN mirror of this repo) on every page load, so pushes to `main` reach everyone within about 12 hours (jsDelivr's branch cache) with nothing to re-paste.
+
 ## Install (Tampermonkey / Violentmonkey)
 1. Install Tampermonkey in Chrome.
 2. Open `workamajig-task-links.user.js` in the browser (or Tampermonkey → Create new script → paste) and save.
