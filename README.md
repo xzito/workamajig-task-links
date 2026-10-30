@@ -30,10 +30,25 @@ Tasks with no assignment slots only get the task link; add an assignment to get 
 - It never modifies the grid's own DOM (doing so makes the grid re-render in a loop); the button and menu are fixed-position overlays.
 - Workamajig rewrites the URL on load and drops the `#task=` hash, so the script runs at `document-start`, stashes the hash in `sessionStorage`, and applies it once the grid renders.
 
-## Install (User JavaScript and CSS extension, auto-updating)
-Create a rule for `https://app20.workamajig.com/*`, paste the contents of `loader.js` into the JavaScript pane, and save. The loader fetches the current script from jsDelivr (a CDN mirror of this repo) on every page load, so pushes to `main` reach everyone within about 12 hours (jsDelivr's branch cache) with nothing to re-paste.
+## Install – recommended (auto-updating, no re-paste)
+Uses the free Chrome extension **User JavaScript and CSS** plus the 11-line `loader.js` in this repo. The loader fetches the current script from jsDelivr on every page load, so updates pushed to `main` reach you within about 12 hours with nothing to do.
 
-## Install (Tampermonkey / Violentmonkey)
+1. Install [User JavaScript and CSS](https://chromewebstore.google.com/detail/user-javascript-and-css/nbhcbdghjpllgmfilhnhkllmkecfmpld) from the Chrome Web Store.
+2. Open Workamajig (`https://app20.workamajig.com/platinum/`), click the extension's toolbar icon, then **New rule**.
+3. Fill in the rule:
+   - **Rule name:** `Workamajig Task Links`
+   - **URL pattern:** `https://app20.workamajig.com/*`
+   - **JavaScript pane (left):** paste the full contents of [`loader.js`](loader.js)
+   - **CSS pane (right):** leave empty
+4. In the rule's options (gear icon), set **Run at** to `document-start` if the option exists. This keeps the task deep link's scroll-and-highlight working; everything else works at any timing.
+5. Save, reload a project Schedule page, and hover a task row. A 🔗 button should appear at the end of the task name.
+
+Troubleshooting:
+- No button: check the rule is enabled for `app20.workamajig.com` (the toggle in the extension popup) and that the URL pattern matches.
+- Button but "No assignment slots" on every task: the extension is sandboxing the script. Make sure it injects into the page context (default), not an isolated one.
+- Need a change immediately rather than within 12 hours: open the jsDelivr URL inside `loader.js` once with `?purge` or use the Tampermonkey install below.
+
+## Install – alternative (Tampermonkey / Violentmonkey)
 1. Install Tampermonkey in Chrome.
 2. Open `workamajig-task-links.user.js` in the browser (or Tampermonkey → Create new script → paste) and save.
 3. Reload any Workamajig schedule page.
