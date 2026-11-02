@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.3.0
-// @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot.
+// @version      0.4.0
+// @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page and shows hours logged vs planned.
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/xzito/workamajig-task-links/main/workamajig-task-links.user.js
@@ -53,7 +53,7 @@
         application: 'wjl getSchedule', performRecalc: false, fromNotification: false, origData: null
       }).then(d => {
         const tasks = new Map(), slots = new Map(), byTuk = new Map();
-        for (const t of d.tasks || []) tasks.set(t.TaskKey, { id: t.TaskID, name: t.TaskName });
+        for (const t of d.tasks || []) tasks.set(t.TaskKey, { id: t.TaskID, name: t.TaskName, actualHours: +t.ActualHours || 0, plannedHours: +t.AllocatedHours || 0 });
         for (const tu of d.projectTaskUserData || []) {
           if (!slots.has(tu.TaskKey)) slots.set(tu.TaskKey, []);
           slots.get(tu.TaskKey).push({
@@ -95,7 +95,7 @@
     taskUserKey = Number(taskUserKey);
     if (!assignmentCache.has(taskUserKey)) {
       assignmentCache.set(taskUserKey, call('Modules.Projects.Production', 'loadAssignment', { TaskUserKey: taskUserKey })
-        .then(d => { const t = (d.table || [])[0]; return t ? { projectKey: t.ProjectKey, taskKey: t.TaskKey, taskUserKey, userKey: t.UserKey } : { taskUserKey }; })
+        .then(d => { const t = (d.table || [])[0]; return t ? { projectKey: t.ProjectKey, taskKey: t.TaskKey, taskUserKey, userKey: t.UserKey, user: t.UserFullName, actualHours: +t.ActualHours || 0, plannedHours: +t.Hours || 0 } : { taskUserKey }; })
         .catch(e => { assignmentCache.delete(taskUserKey); throw e; }));
     }
     return assignmentCache.get(taskUserKey);
@@ -267,6 +267,43 @@
     else if (card) showFor(card);
     else if (btn && !e.target.closest('#wjl-btn,#wjl-menu')) scheduleHide();
   }
+  // ---------- Assignment page: full width + hours logged ----------
+  const ASSIGN_AID = 'projects.production.assignment';
+  let wideStyle;
+  function assignmentPage() {
+    const on = aid() === ASSIGN_AID;
+    if (!wideStyle) {
+      wideStyle = document.createElement('style');
+      wideStyle.id = 'wjl-wide';
+      // Same width the app gives non-"wide" pages, and let the task title wrap instead of truncating.
+      wideStyle.textContent = '#desktop > section > page.wide{width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2) !important}' +
+        '#desktop > section > page.wide h1{max-width:none !important;white-space:normal !important}';
+    }
+    if (on && !wideStyle.isConnected) document.head.appendChild(wideStyle);
+    if (!on && wideStyle.isConnected) wideStyle.remove();
+    if (!on) return;
+
+    const key = qs().get('k');
+    const due = document.querySelector('page.open div.pad-b-l > h2');
+    if (!key || !due || due.parentElement.querySelector('#wjl-hours')) return;
+    const box = document.createElement('div');
+    box.id = 'wjl-hours';
+    box.style.cssText = 'margin:2px 0 8px;font-size:13px;line-height:1.5;color:#555';
+    box.textContent = 'Loading hours…';
+    due.insertAdjacentElement('afterend', box);
+    const fmt = h => (Math.round(h * 100) / 100) + ' h';
+    getAssignment(key).then(async a => {
+      if (!a.taskKey) { box.remove(); return; }
+      const lines = [];
+      try {
+        const t = (await getSchedule(a.projectKey)).tasks.get(a.taskKey) || {};
+        lines.push(`Task: ${fmt(t.actualHours || 0)} logged` + (t.plannedHours ? ` of ${fmt(t.plannedHours)} planned` : ''));
+      } catch (e) { /* schedule not readable for this user */ }
+      lines.push(`This assignment${a.user ? ' (' + a.user + ')' : ''}: ${fmt(a.actualHours)} logged` + (a.plannedHours ? ` of ${fmt(a.plannedHours)} planned` : ''));
+      box.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
+    }).catch(() => box.remove());
+  }
+
   let lastHref = '';
   function tick() {
     if (location.href !== lastHref) {
@@ -275,6 +312,7 @@
       if (btn) btn.style.display = 'none';
       handlePendingTask();
     }
+    assignmentPage();
   }
   function start() {
     document.addEventListener('mouseover', onOver, true);
