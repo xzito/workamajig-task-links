@@ -41,7 +41,7 @@ On an assignment page (`projects.production.assignment`) the script also:
 - Workamajig rewrites the URL on load and drops the `#task=` hash, so the script runs at `document-start`, stashes the hash in `sessionStorage`, and applies it once the grid renders.
 
 ## Install – recommended (auto-updating, no re-paste)
-Uses the free Chrome extension **User JavaScript and CSS** plus the 11-line `loader.js` in this repo. The loader fetches the current script from jsDelivr on every page load, so updates pushed to `main` reach you within about 12 hours with nothing to do.
+Uses the free Chrome extension **User JavaScript and CSS** plus the small `loader.js` in this repo. On every page load the loader fetches the current script straight from this repo on GitHub (raw content, 5-minute cache), so anything pushed to `main` reaches everyone within minutes with nothing to do. If GitHub is unreachable it falls back to the jsDelivr CDN copy.
 
 1. Install [User JavaScript and CSS](https://chromewebstore.google.com/detail/user-javascript-and-css/nbhcbdghjpllgmfilhnhkllmkecfmpld) from the Chrome Web Store.
 2. Open Workamajig (`https://app20.workamajig.com/platinum/`), click the extension's toolbar icon, then **New rule**.
@@ -56,7 +56,7 @@ Uses the free Chrome extension **User JavaScript and CSS** plus the 11-line `loa
 Troubleshooting:
 - No button: check the rule is enabled for `app20.workamajig.com` (the toggle in the extension popup) and that the URL pattern matches.
 - Button but "No assignment slots" on every task: the extension is sandboxing the script. Make sure it injects into the page context (default), not an isolated one.
-- Need a change immediately rather than within 12 hours: open `https://purge.jsdelivr.net/gh/xzito/workamajig-task-links@main/workamajig-task-links.user.js` once to clear the CDN cache, or use the Tampermonkey install below.
+- Still seeing an old version after a push: wait five minutes and reload. (Earlier loader versions used jsDelivr's `@main` URL, whose branch cache proved unreliable and even served stale versions after a purge; if your rule still contains `cdn.jsdelivr.net` as the main source, paste the current `loader.js` again.)
 
 ## Install – alternative (Tampermonkey / Violentmonkey)
 1. Install Tampermonkey in Chrome.
