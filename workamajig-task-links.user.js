@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.4.0
-// @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page and shows hours logged vs planned.
+// @version      0.5.0
+// @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description.
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/xzito/workamajig-task-links/main/workamajig-task-links.user.js
@@ -95,7 +95,17 @@
     taskUserKey = Number(taskUserKey);
     if (!assignmentCache.has(taskUserKey)) {
       assignmentCache.set(taskUserKey, call('Modules.Projects.Production', 'loadAssignment', { TaskUserKey: taskUserKey })
-        .then(d => { const t = (d.table || [])[0]; return t ? { projectKey: t.ProjectKey, taskKey: t.TaskKey, taskUserKey, userKey: t.UserKey, user: t.UserFullName, actualHours: +t.ActualHours || 0, plannedHours: +t.Hours || 0 } : { taskUserKey }; })
+        .then(d => {
+          const t = (d.table || [])[0];
+          if (!t) return { taskUserKey };
+          const rights = (d.init && d.init.rights) || {};
+          return {
+            projectKey: t.ProjectKey, taskKey: t.TaskKey, taskUserKey, userKey: t.UserKey, user: t.UserFullName,
+            actualHours: +t.ActualHours || 0, plannedHours: +t.Hours || 0,
+            taskDescription: (t.TaskDescription || '').replace(/<[^>]*>/g, '').trim(),
+            canEditTasks: !!rights.prjedittasks
+          };
+        })
         .catch(e => { assignmentCache.delete(taskUserKey); throw e; }));
     }
     return assignmentCache.get(taskUserKey);
@@ -302,6 +312,44 @@
       lines.push(`This assignment${a.user ? ' (' + a.user + ')' : ''}: ${fmt(a.actualHours)} logged` + (a.plannedHours ? ` of ${fmt(a.plannedHours)} planned` : ''));
       box.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
     }).catch(() => box.remove());
+    getAssignment(key).then(a => { if (a.taskKey) missingDescription(a); }).catch(() => {});
+  }
+
+  // "Description of Work" tab: say so when the task has no description, and offer the next step.
+  function missingDescription(a) {
+    if (a.taskDescription) return;
+    const sec = document.querySelector('page.open [data-bind-visible="dp@section == \'desc\'"]');
+    if (!sec || sec.querySelector('#wjl-nodesc')) return;
+    const anchor = sec.querySelector('div.pad-t-l') || sec.firstElementChild;
+    const box = document.createElement('div');
+    box.id = 'wjl-nodesc';
+    box.style.cssText = 'margin:0 0 18px;padding:12px 14px;border:1px solid #f0c36d;border-left-width:4px;border-radius:6px;background:#fff8e5;color:#5a4500;font-size:13px;line-height:1.5';
+    const btnCss = 'margin:8px 8px 0 0;padding:5px 10px;border:1px solid #c9a24a;border-radius:4px;background:#fff;color:#5a4500;cursor:pointer;font:inherit;font-size:12px';
+    box.innerHTML = '<div><b>This task has no description.</b> Nobody has written down what this assignment is supposed to deliver.</div>';
+    const ask = document.createElement('button');
+    ask.type = 'button'; ask.style.cssText = btnCss;
+    ask.textContent = 'Request details in a conversation';
+    ask.title = 'Opens the Conversations tab and starts a new post';
+    ask.addEventListener('click', () => {
+      const tab = document.querySelector('page.open button[data-action="clickTab"][data-key="conv"]');
+      if (tab) tab.click();
+      let n = 0;
+      const t = setInterval(() => {
+        const b = document.querySelector('page.open button[data-action="newPost"]');
+        if (b && b.offsetParent) { clearInterval(t); b.click(); }
+        else if (++n > 20) clearInterval(t);
+      }, 150);
+    });
+    box.appendChild(ask);
+    if (a.canEditTasks) {
+      const edit = document.createElement('button');
+      edit.type = 'button'; edit.style.cssText = btnCss;
+      edit.textContent = 'Add a description in the Schedule';
+      edit.title = 'Opens the project schedule with this task highlighted; use the Description column there';
+      edit.addEventListener('click', () => { location.assign(urls.task(a.projectKey, a.taskKey)); });
+      box.appendChild(edit);
+    }
+    anchor ? anchor.insertAdjacentElement('beforebegin', box) : sec.appendChild(box);
   }
 
   let lastHref = '';
