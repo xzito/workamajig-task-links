@@ -21,6 +21,13 @@ Menu items:
 
 Tasks with no assignment slots only get the task link; add an assignment to get an assignment URL.
 
+### Assignment page extras (v0.4)
+
+On an assignment page (`projects.production.assignment`) the script also:
+
+- **Widens the page** to the same width as other screens, and lets the task title wrap, so long task names are no longer cut off with "…".
+- **Shows hours** under the due date: total hours logged on the task (all assignees) vs. planned, and this assignment's own logged vs. planned. Workamajig's native "Hours Remaining" donut only appears when the assignment has planned hours, so this fills the gap. Task totals come from the project schedule data; if you lack rights to read the schedule, only the assignment line shows.
+
 ## How it works
 - Grids are `<grid-row data-key>`; cards are `<li data-target="<screen id>" data-key>`. The script never edits that DOM; the button and menu are fixed-position overlays.
 - Server calls reuse the app's own `data.aspx?<Class>.<method>` endpoints with the session request token (`System.user.rt`):
