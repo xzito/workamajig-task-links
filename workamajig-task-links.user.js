@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.5.0
-// @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description.
+// @version      0.6.0
+// @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/xzito/workamajig-task-links/main/workamajig-task-links.user.js
@@ -32,7 +32,7 @@
   };
 
   // ---------- server calls (same endpoints the app uses; rt is the session request token) ----------
-  async function call(cls, method, params) {
+  async function call(cls, method, params, raw) {
     const rt = (window.System && window.System.user && window.System.user.rt) || '';
     const p = new URLSearchParams();
     p.set('tranID', String(Date.now()));
@@ -40,7 +40,7 @@
     p.set('params', JSON.stringify(params));
     const r = await fetch(`${BASE}data.aspx?${cls}.${method}`, { method: 'POST', body: p, credentials: 'same-origin' });
     const j = await r.json();
-    return j.data || {};
+    return raw ? j : (j.data || {});
   }
 
   // projectKey -> { tasks: Map<TaskKey,{id,name}>, slots: Map<TaskKey,[slot]>, byTuk: Map<TaskUserKey,TaskKey> }
@@ -344,12 +344,89 @@
     if (a.canEditTasks) {
       const edit = document.createElement('button');
       edit.type = 'button'; edit.style.cssText = btnCss;
-      edit.textContent = 'Add a description in the Schedule';
-      edit.title = 'Opens the project schedule with this task highlighted; use the Description column there';
-      edit.addEventListener('click', () => { location.assign(urls.task(a.projectKey, a.taskKey)); });
+      edit.textContent = 'Add a description';
+      edit.addEventListener('click', () => { edit.style.display = 'none'; openEditor(); });
       box.appendChild(edit);
     }
     anchor ? anchor.insertAdjacentElement('beforebegin', box) : sec.appendChild(box);
+
+    function openEditor() {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-top:10px';
+      const ta = document.createElement('textarea');
+      ta.rows = 5;
+      ta.placeholder = 'What is this task supposed to deliver? Scope, inputs, done criteria, links…';
+      ta.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:8px;border:1px solid #c9a24a;border-radius:4px;font:inherit;font-size:13px;resize:vertical';
+      const save = document.createElement('button');
+      save.type = 'button'; save.style.cssText = btnCss + ';background:#5a4500;color:#fff';
+      save.textContent = 'Save description';
+      const cancel = document.createElement('button');
+      cancel.type = 'button'; cancel.style.cssText = btnCss;
+      cancel.textContent = 'Cancel';
+      const sched = document.createElement('a');
+      sched.href = urls.task(a.projectKey, a.taskKey);
+      sched.textContent = 'or edit it in the Schedule';
+      sched.style.cssText = 'font-size:12px;color:#5a4500;margin-left:4px';
+      const msg = document.createElement('div');
+      msg.style.cssText = 'font-size:12px;margin-top:6px';
+      wrap.append(ta, save, cancel, sched, msg);
+      box.appendChild(wrap);
+      ta.focus();
+      cancel.addEventListener('click', () => { wrap.remove(); box.querySelectorAll('button').forEach(b => (b.style.display = '')); });
+      save.addEventListener('click', async () => {
+        const text = ta.value.trim();
+        if (!text) { msg.textContent = 'Type a description first.'; return; }
+        save.disabled = cancel.disabled = true; msg.textContent = 'Saving…';
+        try {
+          await saveTaskDescription(a.projectKey, a.taskKey, text);
+          box.remove();
+          showDescription(sec, text);
+          assignmentCache.delete(Number(a.taskUserKey));
+          toast('Description saved');
+        } catch (e) {
+          save.disabled = cancel.disabled = false;
+          msg.textContent = 'Could not save: ' + (e && e.message || e) + '. You can still add it in the Schedule.';
+        }
+      });
+    }
+  }
+
+  function showDescription(sec, text) {
+    const d = document.createElement('div');
+    d.className = 'pad-section';
+    d.id = 'wjl-desc';
+    const h = document.createElement('h2'); h.textContent = 'Task Description';
+    const body = document.createElement('div'); body.style.whiteSpace = 'pre-wrap'; body.textContent = text;
+    d.append(h, body);
+    sec.insertAdjacentElement('afterbegin', d);
+  }
+
+  // Writes a task description the same way the Schedule page does: a fresh copy of the task row
+  // (from getSchedule) with only Description changed, inside the schedule's save envelope.
+  // Verified Nov 2026: identical side effects to the native save (DateUpdated bumps on all tasks, nothing else).
+  async function saveTaskDescription(projectKey, taskKey, text) {
+    projectKey = Number(projectKey); taskKey = Number(taskKey);
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
+      projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
+      application: 'wjl saveDescription', performRecalc: false, fromNotification: false, origData: null
+    });
+    const row = (sched.tasks || []).find(t => t.TaskKey === taskKey);
+    if (!row) throw new Error('task not found in the schedule');
+    if ((row.Description || '').replace(/<[^>]*>/g, '').trim()) throw new Error('someone just added a description; reload to see it');
+    row.Description = text; row.rowstate = 'US';
+    const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
+      project, projectKey, tasksDM: { insertedItems: [], updatedItems: [row], deletedItems: [] },
+      taskUsersDM: null, predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      removeProjectUsers: [], addedAssignments: [], tasksFromTemplate: 0,
+      scheduleSessionID: sched.scheduleSessionID, newMods: null, poUpdateList: []
+    }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+    scheduleCache.delete(String(projectKey));
+    return true;
   }
 
   let lastHref = '';
