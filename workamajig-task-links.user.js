@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.6.0
+// @version      0.6.1
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -286,8 +286,17 @@
       wideStyle = document.createElement('style');
       wideStyle.id = 'wjl-wide';
       // Same width the app gives non-"wide" pages, and let the task title wrap instead of truncating.
-      wideStyle.textContent = '#desktop > section > page.wide{width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2) !important}' +
-        '#desktop > section > page.wide h1{max-width:none !important;white-space:normal !important}';
+      // Full width; header row grows with a long title; title wraps at a smaller size instead of truncating.
+      wideStyle.textContent = '#desktop > section > page.wide{width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2) !important;grid-template-rows:minmax(90px,auto) 1fr !important}' +
+        '#desktop > section > page.wide > header{min-height:90px;padding-bottom:6px}' +
+        '#desktop > section > page.wide > header hgroup{min-width:0;flex:1 1 auto}' +
+        '#desktop > section > page.wide > header h1{max-width:none !important;white-space:normal !important;font-size:2.4rem !important;line-height:1.2 !important;margin-top:0 !important;overflow:visible !important}' +
+        '#desktop > section > page.wide > header h5{white-space:normal !important;overflow:visible !important}' +
+        '#wjl-hours{border-collapse:collapse;margin:2px 0 10px;font-size:12px;color:#555}' +
+        '#wjl-hours th{font-weight:400;color:#999;text-align:right;padding:0 0 2px 14px}' +
+        '#wjl-hours th:first-child{text-align:left;padding-left:0}' +
+        '#wjl-hours td{padding:1px 0 1px 14px;text-align:right;white-space:nowrap}' +
+        '#wjl-hours td:first-child{text-align:left;padding-left:0;color:#333}';
     }
     if (on && !wideStyle.isConnected) document.head.appendChild(wideStyle);
     if (!on && wideStyle.isConnected) wideStyle.remove();
@@ -296,21 +305,23 @@
     const key = qs().get('k');
     const due = document.querySelector('page.open div.pad-b-l > h2');
     if (!key || !due || due.parentElement.querySelector('#wjl-hours')) return;
-    const box = document.createElement('div');
+    const box = document.createElement('table');
     box.id = 'wjl-hours';
-    box.style.cssText = 'margin:2px 0 8px;font-size:13px;line-height:1.5;color:#555';
-    box.textContent = 'Loading hours…';
+    box.innerHTML = '<tr><td style="color:#999">Loading hours…</td></tr>';
     due.insertAdjacentElement('afterend', box);
-    const fmt = h => (Math.round(h * 100) / 100) + ' h';
+    const fmt = h => String(Math.round((h || 0) * 100) / 100);
+    const cell = (tag, txt) => { const c = document.createElement(tag); c.textContent = txt; return c; };
+    const row = (cells, tag) => { const r = document.createElement('tr'); cells.forEach(c => r.appendChild(cell(tag || 'td', c))); return r; };
     getAssignment(key).then(async a => {
       if (!a.taskKey) { box.remove(); return; }
-      const lines = [];
+      const rows = [row(['Hours', 'Logged', 'Planned', 'Left'], 'th')];
       try {
-        const t = (await getSchedule(a.projectKey)).tasks.get(a.taskKey) || {};
-        lines.push(`Task: ${fmt(t.actualHours || 0)} logged` + (t.plannedHours ? ` of ${fmt(t.plannedHours)} planned` : ''));
+        const t = (await getSchedule(a.projectKey)).tasks.get(a.taskKey);
+        if (t) rows.push(row(['Whole task', fmt(t.actualHours), fmt(t.plannedHours), fmt(t.plannedHours - t.actualHours)]));
       } catch (e) { /* schedule not readable for this user */ }
-      lines.push(`This assignment${a.user ? ' (' + a.user + ')' : ''}: ${fmt(a.actualHours)} logged` + (a.plannedHours ? ` of ${fmt(a.plannedHours)} planned` : ''));
-      box.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
+      rows.push(row([(a.user || 'This assignment').split(' ')[0], fmt(a.actualHours), fmt(a.plannedHours), fmt(a.plannedHours - a.actualHours)]));
+      box.innerHTML = '';
+      rows.forEach(r => box.appendChild(r));
     }).catch(() => box.remove());
     getAssignment(key).then(a => { if (a.taskKey) missingDescription(a); }).catch(() => {});
   }
