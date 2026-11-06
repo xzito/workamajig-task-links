@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.8.2
+// @version      0.9.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.8.2';
+  const VERSION = '0.9.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -329,62 +329,93 @@
   }
 
   // ---------- wiring ----------
-  // ---------- Schedule: add our items to the row's native ⋯ menu (#taskMoreMenu) ----------
+  // ---------- Add our items to Workamajig's own ⋯ menus ----------
+  // Schedule rows: button[data-action="popup setTask"][data-key=TaskKey]  -> menu#taskMoreMenu
+  // Task cards (Today/My Tasks): button[data-target="timeMenu"][data-key=TaskUserKey] -> menu#timeMenu
+  const NATIVE_MENUS = [
+    {
+      trigger: 'button[data-action="popup setTask"][data-key]', menu: 'menu#taskMoreMenu',
+      when: () => aid() === 'projects.schedule.edit2',
+      ref: async key => ({ projectKey: qs().get('k'), taskKey: Number(key) })
+    },
+    {
+      trigger: 'button[data-target="timeMenu"][data-key]', menu: 'menu#timeMenu',
+      when: () => true,
+      ref: key => (/^\d+$/.test(key) ? getAssignment(key) : Promise.resolve(null))
+    }
+  ];
+
   function onNativeMenuClick(e) {
-    const trigger = e.target.closest && e.target.closest('button[data-action="popup setTask"][data-key]');
-    if (!trigger || aid() !== 'projects.schedule.edit2') return;
-    const projectKey = qs().get('k'), taskKey = Number(trigger.getAttribute('data-key'));
-    getSchedule(projectKey).catch(() => {});
-    let n = 0;
-    const t = setInterval(() => {
-      const m = [...document.querySelectorAll('menu#taskMoreMenu')].find(x => x.offsetParent);
-      if (m) { clearInterval(t); fillNativeMenu(m, projectKey, taskKey); }
-      else if (++n > 20) clearInterval(t);
-    }, 50);
+    if (!e.target.closest) return;
+    for (const nm of NATIVE_MENUS) {
+      const trigger = e.target.closest(nm.trigger);
+      if (!trigger || !nm.when()) continue;
+      const refP = nm.ref(trigger.getAttribute('data-key'));
+      refP.then(r => r && r.projectKey && getSchedule(r.projectKey)).catch(() => {});
+      let n = 0;
+      const t = setInterval(() => {
+        const m = [...document.querySelectorAll(nm.menu)].find(x => x.offsetParent);
+        if (m) { clearInterval(t); fillNativeMenu(m, refP); }
+        else if (++n > 20) clearInterval(t);
+      }, 50);
+      return;
+    }
   }
 
-  async function fillNativeMenu(m, projectKey, taskKey) {
+  async function fillNativeMenu(m, refP) {
     m.querySelectorAll('.wjl-native').forEach(x => x.remove());
     const group = document.createElement('div');
     group.className = 'wjl-native';
     group.style.cssText = 'border-top:1px solid #e5e5e5;margin-top:4px;padding-top:8px';
     m.appendChild(group);
+    // Match the menu's own button classes (spacing differs between menus), swapping in the link icon.
+    const proto = m.querySelector('button:not(.wjl-native button)');
+    const baseCls = proto ? [...proto.classList].filter(c => !/^i-/.test(c) && c !== 'bound').join(' ') : 'btn-std icon-l text';
     const dismiss = () => {
       const dlg = m.closest('dialog');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
       setTimeout(() => { if (dlg && dlg.offsetParent) document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); }, 50);
     };
+    const note = text => { const d = document.createElement('div'); d.style.cssText = 'font-size:11px;color:#999;padding:2px 0 6px 28px'; d.textContent = text; group.appendChild(d); return d; };
     const add = (label, title, onClick) => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'btn-std icon-l text margin-b-s i-link';
+      b.className = baseCls + ' i-link';
       b.setAttribute('data-action', 'none');
       b.textContent = label;
       if (title) b.title = title;
       b.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); onClick(); dismiss(); }, true);
       group.appendChild(b);
-      return b;
     };
-    add('Copy task link', 'Opens this schedule and spotlights this task (needs Task Links)', () => copy(urls.task(projectKey, taskKey), 'task link'));
-    const loading = document.createElement('div');
-    loading.style.cssText = 'font-size:11px;color:#999;padding:2px 0 6px 28px'; loading.textContent = 'Loading assignments…';
-    group.appendChild(loading);
-    let sched = null; try { sched = await getSchedule(projectKey); } catch (e) {}
+    const loading = note('Loading links…');
+    let ref = null, sched = null;
+    try { ref = await refP; if (ref && ref.projectKey) sched = await getSchedule(ref.projectKey); } catch (e) {}
     loading.remove();
     if (!group.isConnected) return;
-    const t = sched && sched.tasks.get(taskKey);
-    const slots = (sched && sched.slots.get(taskKey)) || [];
-    slots.forEach(sl => add(`Copy assignment link · ${sl.user.split(' ')[0]}`, `${sl.user}${sl.status ? ' · ' + sl.status : ''}`, () => copy(urls.assignment(sl.taskUserKey), 'assignment link for ' + sl.user)));
-    if (slots.length > 1) add('Copy all assignment links', 'One per line, with names', () =>
-      copy(slots.map(sl => `${t ? t.id + ' - ' + t.name : 'Task'} — ${sl.user}: ${urls.assignment(sl.taskUserKey)}`).join('\n'), 'all links'));
-    if (!slots.length) { const d = document.createElement('div'); d.style.cssText = 'font-size:11px;color:#999;padding:2px 0 6px 28px'; d.textContent = 'No assignments on this task'; group.appendChild(d); }
+    if (!ref || !ref.projectKey) { note('No task found for this item'); return; }
+
+    const onSchedule = aid() === 'projects.schedule.edit2';
+    if (ref.taskKey) add('Copy task link', 'Opens the schedule and spotlights this task (needs Task Links)', () => copy(urls.task(ref.projectKey, ref.taskKey), 'task link'));
+    if (!onSchedule) add('Copy project link', 'Project dashboard', () => copy(urls.project(ref.projectKey), 'project link'));
+
+    const t = ref.taskKey && sched && sched.tasks.get(ref.taskKey);
+    let slots = (ref.taskKey && sched && sched.slots.get(ref.taskKey)) || [];
+    if (!slots.length && ref.taskUserKey) slots = [{ taskUserKey: ref.taskUserKey, user: ref.user || 'this assignment', status: '' }];
+    const mine = ref.userKey ? slots.filter(sl => sl.userKey === ref.userKey) : [];
+    const ordered = mine.concat(slots.filter(sl => !mine.includes(sl)));
+    ordered.forEach(sl => add(`Copy assignment link · ${sl.user.split(' ')[0]}`, `${sl.user}${sl.status ? ' · ' + sl.status : ''}`, () => copy(urls.assignment(sl.taskUserKey), 'assignment link for ' + sl.user)));
+    if (ordered.length > 1) add('Copy all assignment links', 'One per line, with names', () =>
+      copy(ordered.map(sl => `${t ? t.id + ' - ' + t.name : 'Task'} — ${sl.user}: ${urls.assignment(sl.taskUserKey)}`).join('\n'), 'all links'));
+    if (!ordered.length) note('No assignments on this task');
   }
 
   function onOver(e) {
     if (!e.target.closest) return;
     // On the Schedule the links live in Workamajig's own row ⋯ menu instead (see nativeMenu below).
     const row = adapters[aid()] && aid() !== 'projects.schedule.edit2' && e.target.closest('grid-row[data-key]');
-    const card = !row && e.target.closest('[data-target*="."][data-key]');
+    let card = !row && e.target.closest('[data-target*="."][data-key]');
+    // Cards with their own ⋯ time menu get our links inside it instead (see NATIVE_MENUS).
+    if (card && card.querySelector('button[data-target="timeMenu"][data-key]')) card = null;
     if (row && row.classList.contains('datarow')) showFor(row);
     else if (card) showFor(card);
     else if (btn && !e.target.closest('#wjl-btn,#wjl-menu')) scheduleHide();
