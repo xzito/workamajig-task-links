@@ -7,7 +7,7 @@ Hover a task anywhere it appears and a 🔗 button shows up. Clicking it opens a
 
 | Page | What you hover | How it resolves |
 |---|---|---|
-| Project **Schedule** (`projects.schedule.edit2`) | grid row | row `data-key` is the TaskKey; project from the URL |
+| Project **Schedule** (`projects.schedule.edit2`) | the row's own **⋯** menu (v0.8: our items are added to Workamajig's menu, no separate button) | row `data-key` is the TaskKey; project from the URL |
 | **My Tasks** / Today - Creatives (`today.creative`), grid or card view | grid row or card | key is the TaskUserKey; `loadAssignment` gives project + task |
 | **My Time** day view (`user.timeEntry.edit`) | time entry row | row key is the TimeKey; `loadTime` for the page's date gives project + task |
 | Any other card the app navigates from (`data-target` + `data-key`) | card | assignment cards resolve fully; other targets get a plain "Copy link" |
