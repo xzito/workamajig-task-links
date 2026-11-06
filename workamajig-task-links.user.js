@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.7.1
+// @version      0.7.2
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -521,7 +521,11 @@
       ed.focus();
       document.execCommand('selectAll', false, null);
       document.execCommand('insertHTML', false, body);
-      if (ed.textContent.trim()) { subj.focus(); return; }
+      if (ed.textContent.trim()) {
+        // The editor syncs to the model lazily; write it now so Save always carries the body.
+        try { model.diary.setValue('Notes', '<span class="usr ver2">' + ed.innerHTML + '</span>'); } catch (e) {}
+        subj.focus(); return;
+      }
       if (++attempts < 8) { setTimeout(putBody, 300); return; }
       // Editor never took focus: write the model directly, the same shape the editor produces.
       ed.innerHTML = body;

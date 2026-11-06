@@ -14,8 +14,8 @@ Hover a task anywhere it appears and a 🔗 button shows up. Clicking it opens a
 
 Menu items:
 
-- **Copy task link** – `…?aid=projects.schedule.edit2&k=<ProjectKey>#task=<TaskKey>`. Opens the schedule, scrolls to the row and highlights it for 5 s. The highlight needs the script installed; without it the link still opens the right project schedule.
-- **Copy project link** – `…?aid=dashboards.project.dash&k=<ProjectKey>`.
+- **Copy task link** – `…?aid=projects.schedule.edit2&k=<ProjectKey>#task=<TaskKey>`. Opens the schedule, scrolls to the row and spotlights it: the rest of the page dims like a modal backdrop and the row gets an outline, until you click, scroll or 4 s pass. The highlight needs the script installed; without it the link still opens the right project schedule.
+- **Copy project link** – `…?aid=dashboards.project.dash&k=<ProjectKey>` (not shown on the project Schedule page itself, where it is redundant).
 - **Copy assignment link · <person>** – one per assignment slot: `…?aid=projects.production.assignment&k=<TaskUserKey>`. These are native Workamajig URLs and work for anyone with rights to the project (verified as a PM/admin opening another person's assignment).
 - **Copy all assignment links** – all slots, one per line with names (when a task has more than one).
 
@@ -27,7 +27,7 @@ On an assignment page (`projects.production.assignment`) the script also:
 
 - **Widens the page** to the same width as other screens. Long task titles wrap at a slightly smaller size and the header grows to fit, instead of being cut off with "…".
 - **Shows hours** under the due date as a small table (Logged / Planned / Left) with one row for the whole task (all assignees) and one for this assignment. Workamajig's native "Hours Remaining" donut only appears when the assignment has planned hours, so this fills the gap. Task totals come from the project schedule data; if you lack rights to read the schedule, only the assignment line shows.
-- **Flags a missing task description** (v0.5) at the top of the Description of Work tab. "Request details in a conversation" jumps to the Conversations tab and opens a new post on this task. Users with the edit-tasks right also get **Add a description** (v0.6): an inline text box that saves straight to the task, then shows the saved text in place. There is also a link to edit it in the Schedule instead.
+- **Flags a missing task description** (v0.5) at the top of the Description of Work tab. **Request details in a conversation** opens Workamajig's New Post screen for this task with everything prefilled (v0.7): the subject ("Task description needed: <task>"), a short request with the task and assignment links, and the project manager as the only recipient (resolved from the project record and the project team; if there is no match the default recipients stay). You review and press Save. Users with the edit-tasks right also get **Add a description** (v0.6): an inline text box that saves straight to the task, then shows the saved text in place. There is also a link to edit it in the Schedule instead.
 
   How the inline save works: it is the same server call the Schedule page's Save button makes (`updateScheduleDM`), sent with a fresh copy of the task row from `getSchedule` in which only `Description` is changed, plus the project row from `initSchedule`. Verified side by side with a native save: both write the description and bump `DateUpdated` on the project's tasks, and nothing else changes. The script refuses to save when the schedule is locked or when a description appeared in the meantime, and it never overwrites an existing description.
 
