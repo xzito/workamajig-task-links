@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.7.4
+// @version      0.8.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.7.4';
+  const VERSION = '0.8.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -329,9 +329,61 @@
   }
 
   // ---------- wiring ----------
+  // ---------- Schedule: add our items to the row's native ⋯ menu (#taskMoreMenu) ----------
+  function onNativeMenuClick(e) {
+    const trigger = e.target.closest && e.target.closest('button[data-action="popup setTask"][data-key]');
+    if (!trigger || aid() !== 'projects.schedule.edit2') return;
+    const projectKey = qs().get('k'), taskKey = Number(trigger.getAttribute('data-key'));
+    getSchedule(projectKey).catch(() => {});
+    let n = 0;
+    const t = setInterval(() => {
+      const m = [...document.querySelectorAll('menu#taskMoreMenu')].find(x => x.offsetParent);
+      if (m) { clearInterval(t); fillNativeMenu(m, projectKey, taskKey); }
+      else if (++n > 20) clearInterval(t);
+    }, 50);
+  }
+
+  async function fillNativeMenu(m, projectKey, taskKey) {
+    m.querySelectorAll('.wjl-native').forEach(x => x.remove());
+    const group = document.createElement('div');
+    group.className = 'wjl-native';
+    group.style.cssText = 'border-top:1px solid #e5e5e5;margin-top:4px;padding-top:8px';
+    m.appendChild(group);
+    const dismiss = () => {
+      const dlg = m.closest('dialog');
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      setTimeout(() => { if (dlg && dlg.offsetParent) document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); }, 50);
+    };
+    const add = (label, title, onClick) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn-std icon-l text margin-b-s i-link';
+      b.setAttribute('data-action', 'none');
+      b.textContent = label;
+      if (title) b.title = title;
+      b.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); onClick(); dismiss(); }, true);
+      group.appendChild(b);
+      return b;
+    };
+    add('Copy task link', 'Opens this schedule and spotlights this task (needs Task Links)', () => copy(urls.task(projectKey, taskKey), 'task link'));
+    const loading = document.createElement('div');
+    loading.style.cssText = 'font-size:11px;color:#999;padding:2px 0 6px 28px'; loading.textContent = 'Loading assignments…';
+    group.appendChild(loading);
+    let sched = null; try { sched = await getSchedule(projectKey); } catch (e) {}
+    loading.remove();
+    if (!group.isConnected) return;
+    const t = sched && sched.tasks.get(taskKey);
+    const slots = (sched && sched.slots.get(taskKey)) || [];
+    slots.forEach(sl => add(`Copy assignment link · ${sl.user.split(' ')[0]}`, `${sl.user}${sl.status ? ' · ' + sl.status : ''}`, () => copy(urls.assignment(sl.taskUserKey), 'assignment link for ' + sl.user)));
+    if (slots.length > 1) add('Copy all assignment links', 'One per line, with names', () =>
+      copy(slots.map(sl => `${t ? t.id + ' - ' + t.name : 'Task'} — ${sl.user}: ${urls.assignment(sl.taskUserKey)}`).join('\n'), 'all links'));
+    if (!slots.length) { const d = document.createElement('div'); d.style.cssText = 'font-size:11px;color:#999;padding:2px 0 6px 28px'; d.textContent = 'No assignments on this task'; group.appendChild(d); }
+  }
+
   function onOver(e) {
     if (!e.target.closest) return;
-    const row = adapters[aid()] && e.target.closest('grid-row[data-key]');
+    // On the Schedule the links live in Workamajig's own row ⋯ menu instead (see nativeMenu below).
+    const row = adapters[aid()] && aid() !== 'projects.schedule.edit2' && e.target.closest('grid-row[data-key]');
     const card = !row && e.target.closest('[data-target*="."][data-key]');
     if (row && row.classList.contains('datarow')) showFor(row);
     else if (card) showFor(card);
@@ -592,6 +644,7 @@
   }
   function start() {
     document.addEventListener('mouseover', onOver, true);
+    document.addEventListener('click', onNativeMenuClick, true);
     document.addEventListener('scroll', () => { if (btn && !menu) btn.style.display = 'none'; }, true);
     setInterval(tick, 500);
     tick();
