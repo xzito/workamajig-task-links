@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.8.0
+// @version      0.8.1
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.8.0';
+  const VERSION = '0.8.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -439,20 +439,71 @@
   }
 
   // "Description of Work" tab: say so when the task has no description, and offer the next step.
+  // Rendered in a Shadow DOM: Workamajig's global CSS (e.g. textarea{position:absolute;inset:0;height:100%},
+  // button{height:var(--btnHeight)}) would otherwise reshape anything we add to the page.
   function missingDescription(a) {
     if (a.taskDescription) return;
     const sec = document.querySelector('page.open [data-bind-visible="dp@section == \'desc\'"]');
     if (!sec || sec.querySelector('#wjl-nodesc')) return;
     const anchor = sec.querySelector('div.pad-t-l') || sec.firstElementChild;
-    const box = document.createElement('div');
-    box.id = 'wjl-nodesc';
-    box.style.cssText = 'margin:0 0 18px;padding:12px 14px;border:1px solid #f0c36d;border-left-width:4px;border-radius:6px;background:#fff8e5;color:#5a4500;font-size:13px;line-height:1.5';
-    const btnCss = 'margin:8px 8px 0 0;padding:5px 10px;border:1px solid #c9a24a;border-radius:4px;background:#fff;color:#5a4500;cursor:pointer;font:inherit;font-size:12px';
-    box.innerHTML = '<div><b>This task has no description.</b> Nobody has written down what this assignment is supposed to deliver.</div>';
-    const ask = document.createElement('button');
-    ask.type = 'button'; ask.style.cssText = btnCss;
-    ask.textContent = 'Request details in a conversation';
-    ask.title = 'Opens the Conversations tab and starts a new post';
+    const host = document.createElement('div');
+    host.id = 'wjl-nodesc';
+    host.style.cssText = 'display:block;margin:0 0 20px;max-width:900px';
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `
+      <style>
+        :host { all: initial; display: block; font-family: inherit; color: #333; }
+        * { box-sizing: border-box; font-family: inherit; }
+        .card { border: 1px solid #ecd9a6; border-left: 4px solid #e0a82e; border-radius: 8px; background: #fffaf0; padding: 14px 16px; font-size: 13px; line-height: 1.5; }
+        .card.editing { background: #fff; border-color: #d9d9d9; border-left-color: #7ab51d; }
+        .title { font-weight: 600; font-size: 14px; color: #333; margin: 0 0 2px; }
+        .sub { color: #6b6b6b; margin: 0; }
+        .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+        button { font: inherit; font-size: 13px; line-height: 1; padding: 8px 14px; border-radius: 6px; cursor: pointer; border: 1px solid #cfcfcf; background: #fff; color: #333; }
+        button:hover:not(:disabled) { background: #f5f5f5; }
+        button.primary { background: #7ab51d; border-color: #7ab51d; color: #fff; font-weight: 600; }
+        button.primary:hover:not(:disabled) { background: #6a9f18; }
+        button:disabled { opacity: .6; cursor: default; }
+        textarea { display: block; width: 100%; min-height: 140px; max-height: 50vh; margin-top: 10px; padding: 10px 12px; border: 1px solid #cfcfcf; border-radius: 6px; font: inherit; font-size: 13px; line-height: 1.5; color: #333; resize: vertical; overflow: auto; }
+        textarea:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
+        .link { background: none; border: none; padding: 0; color: #1a8fbf; font-size: 12px; cursor: pointer; }
+        .link:hover:not(:disabled) { background: none; text-decoration: underline; }
+        .spacer { flex: 1; }
+        .hint { color: #999; font-size: 11px; }
+        .msg { font-size: 12px; margin-top: 8px; }
+        .msg.err { color: #c0392b; }
+        [hidden] { display: none !important; }
+      </style>
+      <div class="card">
+        <p class="title">This task has no description</p>
+        <p class="sub view">Nobody has written down what this assignment is supposed to deliver.</p>
+        <p class="sub edit" hidden>Describe what this task should deliver so the assignee can start without guessing.</p>
+        <div class="row view">
+          <button type="button" class="primary add" hidden>Add a description</button>
+          <button type="button" class="ask">Request details in a conversation</button>
+        </div>
+        <div class="edit" hidden>
+          <textarea placeholder="Goal, scope, inputs and links, and what done looks like…"></textarea>
+          <div class="row">
+            <button type="button" class="primary save">Save description</button>
+            <button type="button" class="cancel">Cancel</button>
+            <button type="button" class="link outline">Insert outline</button>
+            <span class="spacer"></span>
+            <span class="hint">⌘/Ctrl + Enter to save · Esc to cancel</span>
+          </div>
+          <div class="msg"></div>
+        </div>
+      </div>`;
+    const $ = sel => root.querySelector(sel);
+    const card = $('.card'), ta = $('textarea'), save = $('.save'), cancel = $('.cancel'), msg = $('.msg'), ask = $('.ask'), add = $('.add');
+    const show = editing => {
+      card.classList.toggle('editing', editing);
+      root.querySelectorAll('.view').forEach(e => (e.hidden = editing));
+      root.querySelectorAll('.edit').forEach(e => (e.hidden = !editing));
+      $('.title').textContent = editing ? 'Add a task description' : 'This task has no description';
+    };
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, innerHeight * 0.5) + 'px'; };
+
     ask.addEventListener('click', async () => {
       ask.disabled = true; ask.textContent = 'Opening a new post…';
       let pm = null;
@@ -463,55 +514,41 @@
       // Same screen the native "new conversation" button opens, pre-linked to this task.
       location.assign(`${BASE}?aid=projects.diary.add&k=${a.projectKey}&io=${encodeURIComponent(JSON.stringify({ taskKey: a.taskKey }))}`);
     });
-    box.appendChild(ask);
-    if (a.canEditTasks) {
-      const edit = document.createElement('button');
-      edit.type = 'button'; edit.style.cssText = btnCss;
-      edit.textContent = 'Add a description';
-      edit.addEventListener('click', () => { edit.style.display = 'none'; openEditor(); });
-      box.appendChild(edit);
-    }
-    anchor ? anchor.insertAdjacentElement('beforebegin', box) : sec.appendChild(box);
 
-    function openEditor() {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-top:10px';
-      const ta = document.createElement('textarea');
-      ta.rows = 5;
-      ta.placeholder = 'What is this task supposed to deliver? Scope, inputs, done criteria, links…';
-      ta.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:8px;border:1px solid #c9a24a;border-radius:4px;font:inherit;font-size:13px;resize:vertical';
-      const save = document.createElement('button');
-      save.type = 'button'; save.style.cssText = btnCss + ';background:#5a4500;color:#fff';
-      save.textContent = 'Save description';
-      const cancel = document.createElement('button');
-      cancel.type = 'button'; cancel.style.cssText = btnCss;
-      cancel.textContent = 'Cancel';
-      const sched = document.createElement('a');
-      sched.href = urls.task(a.projectKey, a.taskKey);
-      sched.textContent = 'or edit it in the Schedule';
-      sched.style.cssText = 'font-size:12px;color:#5a4500;margin-left:4px';
-      const msg = document.createElement('div');
-      msg.style.cssText = 'font-size:12px;margin-top:6px';
-      wrap.append(ta, save, cancel, sched, msg);
-      box.appendChild(wrap);
-      ta.focus();
-      cancel.addEventListener('click', () => { wrap.remove(); box.querySelectorAll('button').forEach(b => (b.style.display = '')); });
-      save.addEventListener('click', async () => {
-        const text = ta.value.trim();
-        if (!text) { msg.textContent = 'Type a description first.'; return; }
-        save.disabled = cancel.disabled = true; msg.textContent = 'Saving…';
-        try {
-          await saveTaskDescription(a.projectKey, a.taskKey, text);
-          box.remove();
-          showDescription(sec, text);
-          assignmentCache.delete(Number(a.taskUserKey));
-          toast('Description saved');
-        } catch (e) {
-          save.disabled = cancel.disabled = false;
-          msg.textContent = 'Could not save: ' + (e && e.message || e) + '. You can still add it in the Schedule.';
-        }
-      });
-    }
+    if (a.canEditTasks) add.hidden = false;
+    add.addEventListener('click', () => { show(true); msg.textContent = ''; grow(); ta.focus(); });
+    cancel.addEventListener('click', () => { show(false); });
+    $('.outline').addEventListener('click', () => {
+      const outline = 'Goal:\n\nScope (in / out):\n\nInputs and links:\n\nDone when:\n';
+      ta.value = ta.value.trim() ? ta.value.replace(/\s*$/, '\n\n') + outline : outline;
+      grow(); ta.focus();
+      const at = ta.value.lastIndexOf('Goal:\n') + 6; ta.setSelectionRange(at, at);
+    });
+    ta.addEventListener('input', grow);
+    // Keep the app's own shortcuts from firing while typing here.
+    ['keydown', 'keyup', 'keypress'].forEach(t => ta.addEventListener(t, e => {
+      e.stopPropagation();
+      if (t !== 'keydown') return;
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save.click(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
+    }));
+    save.addEventListener('click', async () => {
+      const text = ta.value.trim();
+      if (!text) { msg.className = 'msg err'; msg.textContent = 'Type a description first.'; ta.focus(); return; }
+      save.disabled = cancel.disabled = ta.disabled = true; save.textContent = 'Saving…'; msg.className = 'msg'; msg.textContent = '';
+      try {
+        await saveTaskDescription(a.projectKey, a.taskKey, text);
+        host.remove();
+        showDescription(sec, text);
+        assignmentCache.delete(Number(a.taskUserKey));
+        toast('Description saved');
+      } catch (e) {
+        save.disabled = cancel.disabled = ta.disabled = false; save.textContent = 'Save description';
+        msg.className = 'msg err';
+        msg.textContent = 'Could not save: ' + (e && e.message || e) + '. You can still add it in the Schedule.';
+      }
+    });
+    anchor ? anchor.insertAdjacentElement('beforebegin', host) : sec.appendChild(host);
   }
 
   function showDescription(sec, text) {
