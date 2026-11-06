@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.7.0
+// @version      0.7.1
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -172,7 +172,7 @@
     if (!r.width) return;
     state.hoverRow = row;
     btn.style.left = (r.right - 26) + 'px';
-    btn.style.top = (row.tagName === 'GRID-ROW' ? r.top + Math.max(0, (r.height - 20) / 2) : r.top + 4) + 'px';
+    btn.style.top = (r.top + Math.min(4, Math.max(0, (r.height - 20) / 2))) + 'px';
     btn.style.display = 'block';
     clearTimeout(hideTimer);
   }
@@ -241,7 +241,7 @@
     const t = ref.taskKey && sched && sched.tasks.get(ref.taskKey);
     const taskLabel = t ? `${t.id} - ${t.name}` : rowName(row);
     if (ref.projectKey && ref.taskKey) item('Copy task link', 'opens the schedule and highlights this task (needs this script)', () => copy(urls.task(ref.projectKey, ref.taskKey), 'task link'));
-    if (ref.projectKey) item('Copy project link', 'project dashboard', () => copy(urls.project(ref.projectKey), 'project link'));
+    if (ref.projectKey && aid() !== 'projects.schedule.edit2') item('Copy project link', 'project dashboard', () => copy(urls.project(ref.projectKey), 'project link'));
 
     let slots = (ref.taskKey && sched && sched.slots.get(ref.taskKey)) || [];
     if (!slots.length && ref.taskUserKey) slots = [{ taskUserKey: ref.taskUserKey, user: 'this assignment', status: '' }];
@@ -254,6 +254,32 @@
   }
 
   // ---------- deep link: #task=<TaskKey> on the schedule page ----------
+  // Dim everything except the row (four panes around it, like a modal backdrop) and outline it; fades on interaction or after 4 s.
+  function spotlight(row) {
+    const r = row.getBoundingClientRect();
+    if (!r.width) return;
+    const pad = 2, top = r.top - pad, bottom = r.bottom + pad, left = r.left - pad, right = r.right + pad;
+    const mk = css => { const d = document.createElement('div'); d.className = 'wjl-spot'; d.style.cssText = 'position:fixed;z-index:99990;pointer-events:none;transition:opacity .4s;' + css; document.body.appendChild(d); return d; };
+    const dim = 'background:rgba(0,0,0,.38);';
+    const els = [
+      mk(dim + `left:0;top:0;right:0;height:${Math.max(0, top)}px`),
+      mk(dim + `left:0;top:${bottom}px;right:0;bottom:0`),
+      mk(dim + `left:0;top:${top}px;width:${Math.max(0, left)}px;height:${bottom - top}px`),
+      mk(dim + `left:${right}px;top:${top}px;right:0;height:${bottom - top}px`),
+      mk(`left:${left}px;top:${top}px;width:${right - left}px;height:${bottom - top}px;border-radius:3px;box-shadow:0 0 0 2px #f5a623,0 0 0 6px rgba(245,166,35,.35)`)
+    ];
+    const evs = ['scroll', 'wheel', 'mousedown', 'keydown', 'touchstart'];
+    let done = false;
+    const end = () => {
+      if (done) return; done = true;
+      evs.forEach(t => document.removeEventListener(t, end, true));
+      els.forEach(e => (e.style.opacity = '0'));
+      setTimeout(() => els.forEach(e => e.remove()), 450);
+    };
+    setTimeout(() => evs.forEach(t => document.addEventListener(t, end, true)), 300);
+    setTimeout(end, 4000);
+  }
+
   function handlePendingTask() {
     let tk = null; try { tk = sessionStorage.getItem(SS_KEY); } catch (e) {}
     if (!tk || aid() !== 'projects.schedule.edit2') return;
@@ -263,10 +289,7 @@
       if (row) {
         clearInterval(t); try { sessionStorage.removeItem(SS_KEY); } catch (e) {}
         row.scrollIntoView({ block: 'center' });
-        const cells = row.querySelector('grid-cells') || row;
-        cells.style.transition = 'box-shadow .3s'; cells.style.boxShadow = 'inset 0 0 0 2px #f5a623';
-        setTimeout(() => (cells.style.boxShadow = ''), 5000);
-        toast('Task highlighted');
+        setTimeout(() => spotlight(row), 400);
       } else if (++tries > 60) { clearInterval(t); try { sessionStorage.removeItem(SS_KEY); } catch (e) {} }
     }, 250);
   }
@@ -493,9 +516,20 @@
     try { model.diary.setValue('Subject', subject); } catch (e) {}
 
     const ed = pg.querySelector('richtexteditor[name="Notes"]');
-    ed.focus();
-    document.execCommand('selectAll', false, null);
-    document.execCommand('insertHTML', false, body);
+    let attempts = 0;
+    const putBody = () => {
+      ed.focus();
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertHTML', false, body);
+      if (ed.textContent.trim()) { subj.focus(); return; }
+      if (++attempts < 8) { setTimeout(putBody, 300); return; }
+      // Editor never took focus: write the model directly, the same shape the editor produces.
+      ed.innerHTML = body;
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+      try { model.diary.setValue('Notes', '<span class="usr ver2">' + body + '</span>'); } catch (e) {}
+      subj.focus();
+    };
+    setTimeout(putBody, 150);
 
     if (req.pm && req.pm.UserKey) {
       const e = model.emailTo;
@@ -506,7 +540,6 @@
       model.diary.setValue('ContactUserKeys', String(req.pm.UserKey));
       model.diary.setValue('ContactUserNames', req.pm.UserName);
     }
-    subj.focus();
   }
 
   function tick() {
