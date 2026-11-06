@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.7.3
+// @version      0.7.4
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.7.3';
+  const VERSION = '0.7.4';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -263,6 +263,13 @@
   // Dim everything except the row (four panes around it, like a modal backdrop) and outline it.
   // Panes follow the row every frame, so late layout shifts or app scrolling on a fresh load don't misplace them.
   // Ends on the user's own input (wheel, click, key, touch) or after 5 s; programmatic scrolls don't end it.
+  // The visible schedule row for a TaskKey (the page also has hidden template/gantt grids that reuse grid-row markup).
+  function findTaskRow(tk) {
+    const all = [...document.querySelectorAll(`grid-row.datarow[data-key="${tk}"]`)];
+    const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    return all.find(el => el.closest('#grdProjectSchedule') && vis(el)) || all.find(vis) || null;
+  }
+
   function spotlight(row) {
     const mk = css => { const d = document.createElement('div'); d.className = 'wjl-spot'; d.style.cssText = 'position:fixed;z-index:99990;pointer-events:none;transition:opacity .4s;opacity:0;' + css; document.body.appendChild(d); return d; };
     const dim = 'background:rgba(0,0,0,.38);';
@@ -272,7 +279,7 @@
     ];
     const els = [pTop, pBottom, pLeft, pRight, ring];
     const place = () => {
-      const el = row.isConnected ? row : document.querySelector(`grid-row.datarow[data-key="${row.getAttribute('data-key')}"]`);
+      const el = row.isConnected && row.getBoundingClientRect().width ? row : findTaskRow(row.getAttribute('data-key'));
       if (el && el !== row) row = el;
       const r = row.getBoundingClientRect();
       if (!r.width) return false;
@@ -305,14 +312,14 @@
     if (!tk || aid() !== 'projects.schedule.edit2') return;
     let tries = 0;
     const t = setInterval(() => {
-      const row = document.querySelector(`grid-row[data-key="${tk}"]`);
+      const row = findTaskRow(tk);
       if (row) {
         clearInterval(t); try { sessionStorage.removeItem(SS_KEY); } catch (e) {}
         row.scrollIntoView({ block: 'center' });
         setTimeout(() => spotlight(row), 400);
         // The app can still shift or reset scroll while it finishes loading; re-center if the row drifted out of view.
         [800, 1600].forEach(ms => setTimeout(() => {
-          const el = document.querySelector(`grid-row.datarow[data-key="${tk}"]`);
+          const el = findTaskRow(tk);
           if (!el) return;
           const r = el.getBoundingClientRect();
           if (r.top < 80 || r.bottom > innerHeight - 40) el.scrollIntoView({ block: 'center' });
