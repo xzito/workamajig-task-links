@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.8.1
+// @version      0.8.2
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.8.1';
+  const VERSION = '0.8.2';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -452,7 +452,7 @@
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
       <style>
-        :host { all: initial; display: block; font-family: inherit; color: #333; }
+        :host { all: initial; display: block; font-family: inherit; color: #333; color-scheme: light; }
         * { box-sizing: border-box; font-family: inherit; }
         .card { border: 1px solid #ecd9a6; border-left: 4px solid #e0a82e; border-radius: 8px; background: #fffaf0; padding: 14px 16px; font-size: 13px; line-height: 1.5; }
         .card.editing { background: #fff; border-color: #d9d9d9; border-left-color: #7ab51d; }
@@ -464,7 +464,9 @@
         button.primary { background: #7ab51d; border-color: #7ab51d; color: #fff; font-weight: 600; }
         button.primary:hover:not(:disabled) { background: #6a9f18; }
         button:disabled { opacity: .6; cursor: default; }
-        textarea { display: block; width: 100%; min-height: 140px; max-height: 50vh; margin-top: 10px; padding: 10px 12px; border: 1px solid #cfcfcf; border-radius: 6px; font: inherit; font-size: 13px; line-height: 1.5; color: #333; resize: vertical; overflow: auto; }
+        textarea { display: block; width: 100%; min-height: 140px; max-height: 50vh; margin-top: 10px; padding: 10px 12px; border: 1px solid #cfcfcf; border-radius: 6px; font: inherit; font-size: 13px; line-height: 1.5; color: #222; background: #fff; caret-color: #222; resize: vertical; overflow: auto; }
+        textarea::placeholder { color: #999; }
+        textarea::selection { background: #cfe6a8; color: #222; }
         textarea:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
         .link { background: none; border: none; padding: 0; color: #1a8fbf; font-size: 12px; cursor: pointer; }
         .link:hover:not(:disabled) { background: none; text-decoration: underline; }
