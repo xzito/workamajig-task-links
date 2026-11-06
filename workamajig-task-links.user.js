@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.6.1
+// @version      0.7.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -15,6 +15,7 @@
 
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
+  const SS_POST = 'wjl.pendingPost';
 
   // Workamajig rewrites the URL on load and drops the hash, so capture it now (document-start).
   (function captureHash() {
@@ -53,6 +54,7 @@
         application: 'wjl getSchedule', performRecalc: false, fromNotification: false, origData: null
       }).then(d => {
         const tasks = new Map(), slots = new Map(), byTuk = new Map();
+        const users = (d.users || []).map(u => ({ UserKey: u.UserKey, UserName: (u.UserName || '').trim(), Email: u.Email || '', ClientVendorLogin: +u.ClientVendorLogin || 0 }));
         for (const t of d.tasks || []) tasks.set(t.TaskKey, { id: t.TaskID, name: t.TaskName, actualHours: +t.ActualHours || 0, plannedHours: +t.AllocatedHours || 0 });
         for (const tu of d.projectTaskUserData || []) {
           if (!slots.has(tu.TaskKey)) slots.set(tu.TaskKey, []);
@@ -63,7 +65,7 @@
           });
           byTuk.set(tu.TaskUserKey, tu.TaskKey);
         }
-        return { tasks, slots, byTuk };
+        return { tasks, slots, byTuk, users };
       }).catch(e => { scheduleCache.delete(projectKey); throw e; }));
     }
     return scheduleCache.get(projectKey);
@@ -103,6 +105,7 @@
             projectKey: t.ProjectKey, taskKey: t.TaskKey, taskUserKey, userKey: t.UserKey, user: t.UserFullName,
             actualHours: +t.ActualHours || 0, plannedHours: +t.Hours || 0,
             taskDescription: (t.TaskDescription || '').replace(/<[^>]*>/g, '').trim(),
+            taskName: t.DetailTaskName || t.FullTaskName || '', projectName: t.FullProjectName || t.ProjectName || '',
             canEditTasks: !!rights.prjedittasks
           };
         })
@@ -341,15 +344,15 @@
     ask.type = 'button'; ask.style.cssText = btnCss;
     ask.textContent = 'Request details in a conversation';
     ask.title = 'Opens the Conversations tab and starts a new post';
-    ask.addEventListener('click', () => {
-      const tab = document.querySelector('page.open button[data-action="clickTab"][data-key="conv"]');
-      if (tab) tab.click();
-      let n = 0;
-      const t = setInterval(() => {
-        const b = document.querySelector('page.open button[data-action="newPost"]');
-        if (b && b.offsetParent) { clearInterval(t); b.click(); }
-        else if (++n > 20) clearInterval(t);
-      }, 150);
+    ask.addEventListener('click', async () => {
+      ask.disabled = true; ask.textContent = 'Opening a new post…';
+      let pm = null;
+      try { pm = await resolveProjectManager(a.projectKey); } catch (e) { /* no PM, keep the default recipients */ }
+      const req = { taskKey: a.taskKey, projectKey: a.projectKey, taskName: a.taskName, projectName: a.projectName,
+        taskUrl: urls.task(a.projectKey, a.taskKey), assignmentUrl: urls.assignment(a.taskUserKey), pm, ts: Date.now() };
+      try { sessionStorage.setItem(SS_POST, JSON.stringify(req)); } catch (e) {}
+      // Same screen the native "new conversation" button opens, pre-linked to this task.
+      location.assign(`${BASE}?aid=projects.diary.add&k=${a.projectKey}&io=${encodeURIComponent(JSON.stringify({ taskKey: a.taskKey }))}`);
     });
     box.appendChild(ask);
     if (a.canEditTasks) {
@@ -441,12 +444,78 @@
   }
 
   let lastHref = '';
+  // The project manager, as a recipient row: name from the project record, key/email from the project team list.
+  async function resolveProjectManager(projectKey) {
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: Number(projectKey) });
+    const name = ((init.project || {}).ProjectManagerName || '').trim();
+    if (!name) return null;
+    const users = (await getSchedule(projectKey)).users;
+    const hit = users.find(u => u.UserName === name && !u.ClientVendorLogin) || users.find(u => u.UserName === name);
+    return hit ? { UserKey: hit.UserKey, UserName: hit.UserName, Email: hit.Email } : { UserName: name };
+  }
+
+  // On the New Post screen: fill subject, body and recipients from the pending request.
+  function handlePendingPost() {
+    let req = null;
+    try { req = JSON.parse(sessionStorage.getItem(SS_POST) || 'null'); } catch (e) {}
+    if (!req) return;
+    if (Date.now() - req.ts > 120000) { try { sessionStorage.removeItem(SS_POST); } catch (e) {} return; }
+    let tries = 0;
+    const t = setInterval(() => {
+      const pg = document.querySelector('page.open[data-aid="projects.diary.add"]');
+      const model = pg && pg.view && pg.view.module && pg.view.module.model;
+      const subj = pg && pg.querySelector('input[name="Subject"]');
+      const ed = pg && pg.querySelector('richtexteditor[name="Notes"]');
+      const ready = model && model.diary && model.diary.si && Number(model.diary.si.TaskKey) === Number(req.taskKey) && subj && ed && model.emailTo && model.emailTo.source;
+      if (!ready) { if (++tries > 80) clearInterval(t); return; }
+      clearInterval(t);
+      try { sessionStorage.removeItem(SS_POST); } catch (e) {}
+      try { fillPost(pg, model, req); toast('Post prefilled — review and Save'); }
+      catch (e) { console.warn('[wjl] prefill failed', e); }
+    }, 250);
+  }
+
+  function fillPost(pg, model, req) {
+    const esc = s => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const first = req.pm && req.pm.UserName ? req.pm.UserName.split(' ')[0] : '';
+    const subject = 'Task description needed: ' + req.taskName;
+    const body =
+      `<p>Hi${first ? ' ' + esc(first) : ''},</p>` +
+      `<p>The task <b>${esc(req.taskName)}</b> on ${esc(req.projectName)} has no description, so it is not clear what it should deliver. Could you add one? Useful to have: what is in and out of scope, any inputs or links, and what done looks like.</p>` +
+      `<p>Task: <a href="${esc(req.taskUrl)}">${esc(req.taskUrl)}</a><br>Assignment: <a href="${esc(req.assignmentUrl)}">${esc(req.assignmentUrl)}</a></p>` +
+      `<p>Thanks!</p>`;
+
+    const subj = pg.querySelector('input[name="Subject"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(subj, subject);
+    subj.dispatchEvent(new Event('input', { bubbles: true }));
+    subj.dispatchEvent(new Event('change', { bubbles: true }));
+    try { model.diary.setValue('Subject', subject); } catch (e) {}
+
+    const ed = pg.querySelector('richtexteditor[name="Notes"]');
+    ed.focus();
+    document.execCommand('selectAll', false, null);
+    document.execCommand('insertHTML', false, body);
+
+    if (req.pm && req.pm.UserKey) {
+      const e = model.emailTo;
+      e.source.map(r => r.UserKey).forEach(k => e.removeByKey(k));
+      e.addItem({ UserKey: req.pm.UserKey, UserName: req.pm.UserName, Email: req.pm.Email || '', ClientVendorLogin: 0,
+        k: req.pm.UserKey, l: req.pm.UserName, label: req.pm.UserName, key: req.pm.UserKey, title: req.pm.Email || '' });
+      e.fire();
+      model.diary.setValue('ContactUserKeys', String(req.pm.UserKey));
+      model.diary.setValue('ContactUserNames', req.pm.UserName);
+    }
+    subj.focus();
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
       if (menu) closeMenu();
       if (btn) btn.style.display = 'none';
       handlePendingTask();
+      if (aid() === 'projects.diary.add') handlePendingPost();
     }
     assignmentPage();
   }
