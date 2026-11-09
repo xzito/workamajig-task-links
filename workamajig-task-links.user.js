@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.29.0';
+  const VERSION = '0.30.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -443,25 +443,32 @@
   let wideStyle;
   function assignmentPage() {
     const on = aid() === ASSIGN_AID;
+    // Styles stay while an assignment page is anywhere in the stack (e.g. under a New Post panel), so it keeps its layout.
+    const present = on || !!document.querySelector('page.open[data-aid="projects.production.assignment"]');
     if (!wideStyle) {
+      const P = '#desktop > section > page.wide[data-aid="projects.production.assignment"]';
       wideStyle = document.createElement('style');
       wideStyle.id = 'wjl-wide';
       // Same width the app gives non-"wide" pages, and let the task title wrap instead of truncating.
       // Full width; header row grows with a long title; title wraps at a smaller size instead of truncating.
-      wideStyle.textContent = '#desktop > section > page.wide{width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2) !important;grid-template-rows:minmax(90px,auto) 1fr !important}' +
-        '#desktop > section > page.wide > header{min-height:90px;padding-top:18px;padding-bottom:8px;box-sizing:border-box}' +
-        '#desktop > section > page.wide > header hgroup{min-width:0;flex:1 1 auto}' +
-        '#desktop > section > page.wide > header h1{max-width:none !important;white-space:normal !important;font-size:2.4rem !important;line-height:1.2 !important;margin-top:0 !important;overflow:visible !important}' +
-        '#desktop > section > page.wide > header h5{white-space:normal !important;overflow:visible !important;position:static !important;display:block !important;margin-top:2px !important}' +
+      wideStyle.textContent = `${P}{width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2) !important;grid-template-rows:minmax(90px,auto) 1fr !important}` +
+        // A panel (New Post, Reply, …) slid in on top: squeeze into the space to its left instead of hiding under it,
+        // and drop the to-do rail so the description keeps room.
+        `${P}:has(~ page.open){width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2 - 912px) !important;min-width:520px !important}` +
+        `${P}:has(~ page.open) > section > #wjl-asgrail{display:none !important}` +
+        `${P} > header{min-height:90px;padding-top:18px;padding-bottom:8px;box-sizing:border-box}` +
+        `${P} > header hgroup{min-width:0;flex:1 1 auto}` +
+        `${P} > header h1{max-width:none !important;white-space:normal !important;font-size:2.4rem !important;line-height:1.2 !important;margin-top:0 !important;overflow:visible !important}` +
+        `${P} > header h5{white-space:normal !important;overflow:visible !important;position:static !important;display:block !important;margin-top:2px !important}` +
         '#wjl-hours{border-collapse:collapse;margin:2px 0 10px;font-size:12px;color:#555}' +
         '#wjl-hours th{font-weight:400;color:#999;text-align:right;padding:0 0 2px 14px}' +
         '#wjl-hours th:first-child{text-align:left;padding-left:0}' +
         '#wjl-hours td{padding:1px 0 1px 14px;text-align:right;white-space:nowrap}' +
         '#wjl-hours td:first-child{text-align:left;padding-left:0;color:#333}';
     }
-    if (on && !wideStyle.isConnected) document.head.appendChild(wideStyle);
-    if (!on && wideStyle.isConnected) wideStyle.remove();
-    asgLayoutStyle(on && asgLayoutOn());
+    if (present && !wideStyle.isConnected) document.head.appendChild(wideStyle);
+    if (!present && wideStyle.isConnected) wideStyle.remove();
+    asgLayoutStyle(present && asgLayoutOn());
     if (!on) { asg.tabFixed = false; return; }
 
     const key = qs().get('k');
@@ -2057,7 +2064,7 @@
   function renderModal() {
     const st = board.modal; if (!st || !board.data) return;
     const old = board.root.querySelector('.mbg');
-    if (old) { const ta = old.querySelector('textarea.mta'); if (ta) st.draft = ta.value; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; }
+    if (old) { const ta = old.querySelector('textarea.mta'); if (ta) st.draft = ta.value; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; const ob = old.querySelector('.mbody'); if (ob) st.scrollTop = ob.scrollTop; }
     const raw = board.data, ref = st.ref;
     const t = (raw.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
     const tu = ref.tuk ? (raw.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
@@ -2119,6 +2126,8 @@
         setTimeout(jump, 30); setTimeout(jump, 900);
       }
     }
+    // Keep the body's scroll position when the modal redraws (e.g. when to-dos finish loading).
+    if (st.scrollTop) { const nb = board.root.querySelector('.mbody'); if (nb) nb.scrollTop = st.scrollTop; }
     const ta = board.root.querySelector('.mta');
     if (ta && st.editing) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
     else if (st.focusTodo) { const ti = board.root.querySelector('.tdnew'); if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); } st.focusTodo = false; }
