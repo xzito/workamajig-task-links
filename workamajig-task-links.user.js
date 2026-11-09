@@ -1204,7 +1204,9 @@
   const boardPref = () => { try { return localStorage.getItem(BOARD_PREF) === '1'; } catch (e) { return false; } };
   const setBoardPref = v => { try { localStorage.setItem(BOARD_PREF, v ? '1' : '0'); } catch (e) {} };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const schedulePage = () => document.querySelector('page.open[data-aid="projects.schedule.edit2"]');
+  // Topmost Schedule page: "Open in schedule" from an assignment can stack a second copy on top of the first.
+  const schedulePage = () => { const all = document.querySelectorAll('page.open[data-aid="projects.schedule.edit2"]'); return all[all.length - 1] || null; };
+  const inSchedule = sel => { const pg = schedulePage(); return pg && pg.querySelector(sel); };
 
   function boardTick() {
     if (aid() !== 'projects.schedule.edit2') {
@@ -1219,13 +1221,14 @@
     let pending = null; try { pending = sessionStorage.getItem(SS_KEY); } catch (e) {}
     // A task deep link keeps this page load in List view so the spotlighted row stays visible.
     if (pending) board.noAuto = pk;
-    if (!board.on && boardPref() && board.noAuto !== pk && document.querySelector('page.open #grdProjectSchedule grid-row[data-key]')) openBoard();
+    if (!board.on && boardPref() && board.noAuto !== pk && inSchedule('#grdProjectSchedule grid-row[data-key]')) openBoard();
   }
 
   // List / Board switch: top right of the page header, next to Workamajig's "saved" indicator.
   function ensureBoardSeg() {
-    if (board.seg && board.seg.isConnected) return;
     const pg = schedulePage();
+    if (board.seg && board.seg.isConnected && pg && pg.contains(board.seg)) return;
+    if (board.seg) board.seg.remove();
     const spacer = pg && pg.querySelector(':scope > header > div.spacer');
     const fallback = pg && pg.querySelector('button[data-action="toggleGantt"]');
     if (!spacer && !fallback) return;
@@ -1251,8 +1254,10 @@
 
   function ensureBoardToggle() {
     ensureBoardSeg();
-    if (board.toggle && board.toggle.isConnected) return;
-    const anchor = document.querySelector('page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"]');
+    const spg = schedulePage();
+    if (board.toggle && board.toggle.isConnected && spg && spg.contains(board.toggle)) return;
+    if (board.toggle) board.toggle.remove();
+    const anchor = inSchedule('button[data-action="toggleGantt"]');
     if (!anchor) return;
     const host = document.createElement('span');
     host.id = 'wjl-board-toggle';
@@ -1463,7 +1468,7 @@
     // The list underneath still shows statuses from before; let the app reload them.
     if (wasOn && board.dirty && !leaving) {
       board.dirty = false;
-      const rb = document.querySelector('page.open[data-aid="projects.schedule.edit2"] button[data-action="refreshData"]');
+      const rb = inSchedule('button[data-action="refreshData"]');
       if (rb) rb.click();
     }
   }
@@ -1486,7 +1491,7 @@
   function positionBoard() {
     if (!board.host) return;
     if (board.on && board.data) syncNativeSearch();
-    const grid = document.querySelector('page.open[data-aid="projects.schedule.edit2"] #grdProjectSchedule');
+    const grid = inSchedule('#grdProjectSchedule');
     const r = grid && grid.getBoundingClientRect();
     // Hide while another page or panel sits on top of the schedule.
     const pages = [...document.querySelectorAll('page.open')];
@@ -2081,7 +2086,7 @@
     setTimeout(panelDimTick, 150);
     let seen = false, n = 0;
     const t = setInterval(() => {
-      const open = !!document.querySelector('page.open[data-aid="projects.schedule.edit2"] panel#pnlAssignments.open');
+      const open = !!inSchedule('panel#pnlAssignments.open');
       if (open) { seen = true; return; }
       if (!seen && ++n < 20) return; // panel not up yet
       clearInterval(t);
