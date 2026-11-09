@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.12.0
+// @version      0.13.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.12.0';
+  const VERSION = '0.13.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -641,7 +641,7 @@
   // Writes a task description the same way the Schedule page does: a fresh copy of the task row
   // (from getSchedule) with only Description changed, inside the schedule's save envelope.
   // Verified Nov 2026: identical side effects to the native save (DateUpdated bumps on all tasks, nothing else).
-  async function saveTaskDescription(projectKey, taskKey, text) {
+  async function saveTaskDescription(projectKey, taskKey, text, expected) {
     projectKey = Number(projectKey); taskKey = Number(taskKey);
     const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
     const project = init.project;
@@ -653,7 +653,11 @@
     });
     const row = (sched.tasks || []).find(t => t.TaskKey === taskKey);
     if (!row) throw new Error('task not found in the schedule');
-    if ((row.Description || '').replace(/<[^>]*>/g, '').trim()) throw new Error('someone just added a description; reload to see it');
+    const norm = v => String(v || '').replace(/\r\n/g, '\n').trim();
+    if (norm(row.Description) !== norm(expected)) {
+      throw new Error(norm(expected) ? 'someone else changed this description while you were editing; reload to see their version'
+        : 'someone just added a description; reload to see it');
+    }
     row.Description = text; row.rowstate = 'US';
     const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
       project, projectKey, tasksDM: { insertedItems: [], updatedItems: [row], deletedItems: [] },
@@ -1165,7 +1169,7 @@
     const descHtml = st.editing
       ? `<textarea class="mta" placeholder="Goal, scope, inputs and links, and what done looks like…">${esc(st.draft)}</textarea>
          <div class="mrow"><button type="button" class="mbtn primary msave">Save description</button><button type="button" class="mbtn mcancel">Cancel</button><span class="mhint">⌘/Ctrl + Enter to save</span></div>`
-      : desc ? `<div class="mdesc">${linkify(desc)}</div>`
+      : desc ? `<div class="mdesc">${linkify(desc)}</div>${canEdit ? '<div class="mrow"><button type="button" class="mlink medit">Edit description</button></div>' : ''}`
       : `<div class="mnodesc">No description yet.${canEdit ? ' <button type="button" class="mlink madd">Add one</button>' : ''} <button type="button" class="mlink mask">Request details in a conversation</button></div>`;
     const people = others.map(o => `<div class="mp">${avatarHtml(o.UserKey || -1, o.UserName, o.Initials)}<span>${esc((o.UserName || 'Unassigned slot').trim())}<small>${esc(o.StatusName || 'No status')}</small></span></div>`).join('');
     const html = `<div class="mbg"><div class="modal" role="dialog" aria-modal="true" style="--c:${color}">
@@ -1211,7 +1215,8 @@
     if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
     if (t.classList.contains('mcopya')) { copy(urls.assignment(ref.tuk), 'assignment link'); return; }
-    if (t.classList.contains('madd')) { st.editing = true; st.draft = ''; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('madd')) { st.editing = true; st.draft = ''; st.base = ''; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('medit')) { st.editing = true; st.base = task.Description || ''; st.draft = String(st.base).replace(/<[^>]*>/g, ''); st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mcancel')) { st.editing = false; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mask')) {
       t.disabled = true; t.textContent = 'Opening a new post…';
@@ -1227,7 +1232,7 @@
       if (!text) { st.msg = 'Type a description first.'; st.draft = ''; renderModal(); return; }
       t.disabled = true; t.textContent = 'Saving…';
       try {
-        await saveTaskDescription(board.projectKey, ref.taskKey, text);
+        await saveTaskDescription(board.projectKey, ref.taskKey, text, st.base || '');
         task.Description = text; st.editing = false; st.msg = ''; toast('Description saved');
       } catch (err) { st.msg = 'Could not save: ' + (err && err.message || err); st.draft = text; }
       renderModal();
@@ -1264,6 +1269,7 @@
     const slotsBefore = (board.data.projectTaskUserData || []).filter(x => x.TaskKey === taskKey).map(x => x.TaskUserKey + ':' + x.UserKey).join(',');
     board.suspended = true; positionBoard();
     btn.click();
+    setTimeout(panelDimTick, 150);
     let seen = false, n = 0;
     const t = setInterval(() => {
       const open = !!document.querySelector('page.open[data-aid="projects.schedule.edit2"] panel#pnlAssignments.open');
@@ -1359,6 +1365,43 @@
       toast('Could not change the status: ' + (err && err.message || err));
     }
   }
+  // Dim the page around Workamajig's assignment panel (panel#pnlAssignments), like a modal backdrop.
+  // z-index 25 keeps it under the app's own dropdowns (#dialogContainer is z 10000). Clicking the dim closes
+  // the panel through its own × button, so the app's unsaved-changes handling still applies.
+  let panelDim = null;
+  function panelDimTick() {
+    if (panelDim) return;
+    const p = [...document.querySelectorAll('panel#pnlAssignments.open')].find(x => x.offsetParent && x.getBoundingClientRect().width);
+    if (!p) return;
+    const mk = () => {
+      const d = document.createElement('div');
+      d.className = 'wjl-pdim';
+      d.title = 'Close';
+      d.style.cssText = 'position:fixed;z-index:25;background:rgba(20,20,20,.45);opacity:0;transition:opacity .2s;cursor:pointer';
+      d.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+      d.addEventListener('click', e => {
+        e.preventDefault(); e.stopPropagation();
+        const x = [...p.querySelectorAll('button')].find(b => /i-close/.test(b.className) && b.offsetParent);
+        if (x) x.click();
+      });
+      document.body.appendChild(d);
+      return d;
+    };
+    const [a, b, c, d] = [mk(), mk(), mk(), mk()];
+    panelDim = [a, b, c, d];
+    requestAnimationFrame(() => panelDim && panelDim.forEach(e => (e.style.opacity = '1')));
+    const loop = () => {
+      const r = p.isConnected && p.classList.contains('open') && p.offsetParent ? p.getBoundingClientRect() : null;
+      if (!r || !r.width) { panelDim.forEach(e => e.remove()); panelDim = null; return; }
+      Object.assign(a.style, { left: '0', top: '0', width: '100vw', height: Math.max(0, r.top) + 'px' });
+      Object.assign(b.style, { left: '0', top: r.bottom + 'px', width: '100vw', height: Math.max(0, innerHeight - r.bottom) + 'px' });
+      Object.assign(c.style, { left: '0', top: r.top + 'px', width: Math.max(0, r.left) + 'px', height: r.height + 'px' });
+      Object.assign(d.style, { left: r.right + 'px', top: r.top + 'px', width: Math.max(0, innerWidth - r.right) + 'px', height: r.height + 'px' });
+      requestAnimationFrame(loop);
+    };
+    loop();
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -1369,6 +1412,7 @@
     }
     assignmentPage();
     boardTick();
+    panelDimTick();
   }
   function start() {
     document.addEventListener('mouseover', onOver, true);
