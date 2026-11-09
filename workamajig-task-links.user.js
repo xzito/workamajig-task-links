@@ -767,13 +767,16 @@
   function boardTick() {
     if (aid() !== 'projects.schedule.edit2') {
       if (board.on || board.host) closeBoard(true);
+      board.noAuto = null;
       return;
     }
     ensureBoardToggle();
     const pk = qs().get('k');
     if (board.on && board.projectKey !== pk) { closeBoard(true); }
     let pending = null; try { pending = sessionStorage.getItem(SS_KEY); } catch (e) {}
-    if (!board.on && boardPref() && !pending && document.querySelector('page.open #grdProjectSchedule grid-row[data-key]')) openBoard();
+    // A task deep link keeps this page load in List view so the spotlighted row stays visible.
+    if (pending) board.noAuto = pk;
+    if (!board.on && boardPref() && board.noAuto !== pk && document.querySelector('page.open #grdProjectSchedule grid-row[data-key]')) openBoard();
   }
 
   function ensureBoardToggle() {
