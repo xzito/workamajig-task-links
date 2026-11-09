@@ -990,9 +990,10 @@
     return doc.body.innerHTML;
   }
 
+  // d is a UTC timestamp without a zone ("2026-07-24T21:42:00").
   const fmtWhen = d => {
     if (!d) return '';
-    const x = new Date(String(d).slice(0, 19));
+    const x = new Date(String(d).slice(0, 19) + 'Z');
     if (isNaN(x)) return '';
     const sameYear = x.getFullYear() === new Date().getFullYear();
     return x.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }) + ', ' + x.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -1028,6 +1029,7 @@
       .txt a { color: #1a8fbf; }
       .txt table { border-collapse: collapse; } .txt td, .txt th { border: 1px solid #e3e3e3; padding: 3px 6px; }
       .clamp { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+      .new { font-size: 10px; font-weight: 600; color: #1a6fa0; background: #e3f1fa; border-radius: 999px; padding: 1px 6px; margin-left: 4px; }
       .att { font-size: 11px; color: #888; margin: 0 0 8px; }
       .tog { margin: 0 0 8px; }
       .earlier { padding: 8px 14px 0 54px; }
@@ -1041,7 +1043,22 @@
       try {
         const res = await call('Modules.Projects.Production', 'getConversations', { Entity: 'tTask', EntityKey: a.taskKey }, true);
         if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
-        st.posts = (res.data && res.data.diary) || []; st.err = '';
+        // One row per thread (its latest post); load each thread in full, as the native thread screen does.
+        const latest = new Map();
+        ((res.data && res.data.diary) || []).forEach(r => latest.set(r.RootActivityKey || r.ActivityKey, r));
+        const threads = await Promise.all([...latest.entries()].map(async ([rk, r]) => {
+          try {
+            const t = await call('Modules.Projects.Production', 'loadThread', { loaded: true, ActivityKey: rk, LinkedProjectKey: null, loadWebDav: 0 }, true);
+            const th = (!t.errors || !t.errors.length) && t.data && t.data.thread;
+            if (!th || !th.length) throw new Error('empty');
+            // loadThread dates are UTC.
+            return th.map(x => Object.assign(x, { RootActivityKey: rk, _utc: x.DateAdded }));
+          } catch (e) {
+            // Fall back to the latest post alone (SortDate is its UTC time).
+            return [Object.assign(r, { RootActivityKey: rk, _utc: r.SortDate })];
+          }
+        }));
+        st.posts = threads.flat(); st.err = '';
       } catch (e) { st.posts = st.posts || []; st.err = 'Could not load conversations: ' + (e && e.message || e); }
       render();
     };
@@ -1053,7 +1070,7 @@
       const long = (p.Notes || '').replace(/<[^>]*>/g, '').length > 600;
       const open = st.open.has(key);
       return `<div class="msg"><div class="av">${initials(p.AddedByUserName || p.OriginatorUserName)}${p.AddedByKey ? `<img alt="" src="${BASE}common/logo.aspx?logo=avatar&k=${p.AddedByKey}&type=User">` : ''}</div>
-        <div class="mb"><div class="who"><b>${esc(p.AddedByUserName || p.OriginatorUserName || 'Someone')}</b>${esc(fmtWhen(p.DateAdded))}</div>
+        <div class="mb"><div class="who"><b>${esc(p.AddedByUserName || p.OriginatorUserName || 'Someone')}</b>${esc(fmtWhen(p._utc))}${p.IsRead === 0 ? ' <span class="new">Unread</span>' : ''}</div>
         <div class="txt ${long && !open ? 'clamp' : ''}">${html || '<span class="muted">(no text)</span>'}</div>
         ${long ? `<button type="button" class="link tog" data-k="${key}">${open ? 'Show less' : 'Show more'}</button>` : ''}
         ${p.AttachmentCount ? `<div class="att">${p.AttachmentCount} attachment${p.AttachmentCount > 1 ? 's' : ''} · open the thread to view</div>` : ''}</div></div>`;
@@ -1071,10 +1088,10 @@
         threads.get(rk).push(p);
       });
       const arr = [...threads.entries()].map(([rk, items]) => {
-        items.sort((x, y) => String(x.DateAdded).localeCompare(String(y.DateAdded)));
+        items.sort((x, y) => String(x._utc).localeCompare(String(y._utc)));
         const first = items.find(x => x.ActivityKey === rk) || items[0];
         const last = items[items.length - 1];
-        return { rk, items, subject: first.Subject || last.Subject || '(no subject)', latest: String(last.DateAdded || '') };
+        return { rk, items, subject: first.Subject || last.Subject || '(no subject)', latest: String(last._utc || '') };
       }).sort((x, y) => y.latest.localeCompare(x.latest));
       root.querySelector('.count').textContent = arr.length;
       if (!arr.length) {
