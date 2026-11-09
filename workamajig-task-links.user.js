@@ -1095,6 +1095,8 @@
         st.posts = threads.flat(); st.err = '';
       } catch (e) { st.posts = st.posts || []; st.err = 'Could not load conversations: ' + (e && e.message || e); }
       render();
+      host.wjlLoaded = true;
+      host.dispatchEvent(new CustomEvent('wjlconvloaded'));
     };
     host.wjlLoad = load;
 
@@ -2123,7 +2125,9 @@
         st.scrollConv = false;
         // Jump (not smooth): the threads load a moment later and would interrupt a smooth scroll, so repeat once.
         const jump = () => { const mb = board.root.querySelector('.mbody'), sl = board.root.querySelector('.mconvslot'); if (mb && sl) mb.scrollTop += sl.getBoundingClientRect().top - mb.getBoundingClientRect().top - 8; };
-        setTimeout(jump, 30); setTimeout(jump, 900);
+        setTimeout(jump, 30);
+        // Threads still loading: the body is too short to scroll yet, so jump again once they're in.
+        if (!ch.wjlLoaded) ch.addEventListener('wjlconvloaded', () => setTimeout(jump, 30), { once: true });
       }
     }
     // Keep the body's scroll position when the modal redraws (e.g. when to-dos finish loading).
