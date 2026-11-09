@@ -1568,7 +1568,7 @@
       .mx { position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; font-size: 22px; color: #777; cursor: pointer; line-height: 1; }
       .mx:hover { background: #f1f1f1; color: #222; }
       .mstat { display: flex; gap: 8px; align-items: center; }
-      .mstatus { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px; border: 0; background: var(--c); color: #111; cursor: pointer; }
+      .mstatus { font: inherit; font-size: 12px; font-weight: 600; line-height: 1; padding: 6px 28px 6px 12px; border-radius: 999px; border: 1px solid rgba(0,0,0,.08); background: var(--c) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23222' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 11px center / 9px 6px; color: #111; cursor: pointer; appearance: none; -webkit-appearance: none; }
       .mcols { display: flex; min-height: 0; flex: 1; }
       .mcols > .mbody { flex: 1; min-width: 0; }
       .mbody { padding: 16px 22px; overflow-y: auto; }
