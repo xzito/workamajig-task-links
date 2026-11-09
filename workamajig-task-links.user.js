@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.11.0
+// @version      0.11.1
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.11.0';
+  const VERSION = '0.11.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -806,7 +806,7 @@
     // Hide while another page or panel sits on top of the schedule.
     const pages = [...document.querySelectorAll('page.open')];
     const covered = pages.length > 1 && pages[pages.length - 1] !== schedulePage();
-    if (!r || !r.width || covered) { board.host.style.visibility = 'hidden'; return; }
+    if (!r || !r.width || covered || board.suspended) { board.host.style.visibility = 'hidden'; return; }
     board.host.style.visibility = 'visible';
     const h = r.height > 150 ? r.height : innerHeight - r.top - 8;
     Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: Math.max(220, h) + 'px' });
@@ -1057,7 +1057,7 @@
   }
   function unassignedCard(t) {
     const label = t.due ? t.due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-    return `<div class="card static" data-task="${t.taskKey}" style="--c:#9b9b9b" title="No one is assigned to this task">
+    return `<div class="card static" data-task="${t.taskKey}" style="--c:#9b9b9b" title="No one is assigned. Click to assign people.">
       <div class="top"><span class="id">${esc(t.taskId)}</span><span class="grp">${esc(t.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(t.taskName)}</div>
@@ -1139,6 +1139,7 @@
       </div>
       <div class="mfoot">
         ${tu ? `<button type="button" class="mbtn primary mopen">Open full assignment</button>` : ''}
+        ${canEdit ? `<button type="button" class="mbtn ${tu ? '' : 'primary'} massign">${tu ? 'Manage assignees' : 'Assign people'}</button>` : ''}
         <button type="button" class="mbtn mlist">Show in list</button>
         <span class="spacer"></span>
         <button type="button" class="mbtn mcopyt">Copy task link</button>
@@ -1160,6 +1161,7 @@
     const task = (board.data.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
     if (t.classList.contains('mopen')) { location.assign(urls.assignment(ref.tuk)); return; }
     if (t.classList.contains('mlist')) { closeModal(); showInList(ref.taskKey); return; }
+    if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
     if (t.classList.contains('mcopya')) { copy(urls.assignment(ref.tuk), 'assignment link'); return; }
     if (t.classList.contains('madd')) { st.editing = true; st.draft = ''; st.msg = ''; renderModal(); return; }
@@ -1205,6 +1207,35 @@
     board.menu = m;
   }
   function closeCardMenu() { if (board.menu) { board.menu.remove(); board.menu = null; } }
+
+  // Opens Workamajig's own assignment panel (panel#pnlAssignments) for a task, with the board stepped aside,
+  // then reloads the board once the panel closes (polling a few seconds for autosave to land).
+  function openNativeAssign(taskKey) {
+    const row = findTaskRow(taskKey);
+    const btn = row && row.querySelector('button[data-action="openPanel"][data-action-topic="assignments"]');
+    if (!btn) { toast('Opening the task in the list to assign people'); showInList(taskKey); return; }
+    const slotsBefore = (board.data.projectTaskUserData || []).filter(x => x.TaskKey === taskKey).map(x => x.TaskUserKey + ':' + x.UserKey).join(',');
+    board.suspended = true; positionBoard();
+    btn.click();
+    let seen = false, n = 0;
+    const t = setInterval(() => {
+      const open = !!document.querySelector('page.open[data-aid="projects.schedule.edit2"] panel#pnlAssignments.open');
+      if (open) { seen = true; return; }
+      if (!seen && ++n < 20) return; // panel not up yet
+      clearInterval(t);
+      board.suspended = false; positionBoard();
+      if (!seen) { toast('Could not open the assignment panel'); return; }
+      refreshUntilChanged(taskKey, slotsBefore);
+    }, 250);
+  }
+  async function refreshUntilChanged(taskKey, before) {
+    for (let i = 0; i < 8; i++) {
+      await loadBoard();
+      const now = (board.data && board.data.projectTaskUserData || []).filter(x => x.TaskKey === taskKey).map(x => x.TaskUserKey + ':' + x.UserKey).join(',');
+      if (now !== before) { toast('Board updated'); return; }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
 
   function showInList(taskKey) {
     setBoardPref(false);
