@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.27.1';
+  const VERSION = '0.27.2';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1458,9 +1458,17 @@
     if (!fo.wjlWrap || fo.f !== fo.wjlWrap) {
       const orig = fo.f;
       fo.wjlOrig = orig;
+      // A chosen task shows if Workamajig's own filter allows it. A group heading shows only if at least one chosen
+      // task under it is itself visible (so headings of completed, hidden matches don't linger on their own).
       fo.wjlWrap = function (item, idx, src) {
         const ok = orig.call(this, item, idx, src);
-        return ok && (!fo.wjlKeys || fo.wjlKeys.has(item.TaskKey));
+        if (!ok || !fo.wjlKeys) return ok;
+        const k = item.TaskKey;
+        if (fo.wjlLeaf.has(k)) return true;
+        const under = fo.wjlUnder.get(k);
+        if (!under) return false;
+        const live = new Map((ds.source || []).map(t => [t.TaskKey, t]));
+        return under.some(lk => { const l = live.get(lk); return !!l && orig.call(this, l, idx, src); });
       };
       fo.f = fo.wjlWrap;
     }
@@ -1471,9 +1479,15 @@
     if (!ds || !installFilterWrap(ds)) { toast('Could not filter the list on this page'); return; }
     const src = ds.source || [];
     const byKey = new Map(src.map(t => [t.TaskKey, t]));
-    const keys = new Set();
-    leafKeys.forEach(k => { let x = byKey.get(k); while (x && !keys.has(x.TaskKey)) { keys.add(x.TaskKey); x = byKey.get(x.SummaryTaskKey); } });
-    ds.options.filter.wjlKeys = keys;
+    const keys = new Set(), under = new Map();
+    leafKeys.forEach(k => {
+      if (!byKey.has(k)) return;
+      keys.add(k);
+      let x = byKey.get(byKey.get(k).SummaryTaskKey);
+      while (x) { keys.add(x.TaskKey); if (!under.has(x.TaskKey)) under.set(x.TaskKey, []); under.get(x.TaskKey).push(k); x = byKey.get(x.SummaryTaskKey); }
+    });
+    const fo = ds.options.filter;
+    fo.wjlLeaf = new Set(leafKeys); fo.wjlUnder = under; fo.wjlKeys = keys;
     listFilter = { kind, key, label, leaf: new Set(leafKeys), ds };
     ds.refresh(true);
     closeListHygiene();
