@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.18.0';
+  const VERSION = '0.19.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -849,13 +849,134 @@
       button + button { border-left: 1px solid #cfcfcf; }
       button.on { background: #333; color: #fff; font-weight: 600; }
       [hidden] { display: none !important; }
-    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div>`;
+      .wrap { display: inline-flex; align-items: center; gap: 8px; }
+      .hyg { border: 1px solid #cfcfcf; border-radius: 8px; }
+      .hyg .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
+      .hyg.open { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
+      .hmenu { position: fixed; z-index: 10001; width: 380px; max-height: 70vh; overflow: auto; background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 8px 0; font-size: 13px; color: #333; }
+      .htitle { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #999; padding: 2px 14px 6px; }
+      .hrow { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 14px; text-align: left; border: 0; border-radius: 0; background: #fff; cursor: pointer; font-size: 13px; color: #333; line-height: 1.3; }
+      .hrow:hover { background: #f6f6f6; }
+      .hrow[disabled] { cursor: default; color: #aaa; }
+      .hrow[disabled]:hover { background: #fff; }
+      .caret { width: 10px; color: #999; font-size: 10px; }
+      .hl { flex: 1; min-width: 0; }
+      .hl small { display: block; font-size: 11px; color: #999; }
+      .hc { font-size: 12px; font-weight: 600; color: #8a5a00; background: #fff4d6; border-radius: 999px; padding: 1px 8px; }
+      .hrow[disabled] .hc { color: #999; background: #f1f1f1; }
+      .items { padding: 2px 0 6px; background: #fafafa; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #f0f0f0; }
+      .it { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 5px 14px 5px 34px; font-size: 12px; color: #333; cursor: pointer; line-height: 1.35; }
+      .it:hover { background: #eef6fb; }
+      .it .id { color: #888; margin-right: 4px; }
+      .it small { display: block; color: #999; font-size: 11px; }
+      .onboard { display: block; border: 0; background: none; padding: 4px 14px 2px 34px; color: #1a8fbf; font-size: 12px; text-decoration: underline; cursor: pointer; }
+      .hfoot { padding: 8px 14px 2px; font-size: 11px; color: #999; }
+      .msg { padding: 10px 14px; color: #888; font-size: 12px; }
+    </style><div class="wrap"><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div><div class="hmenu" hidden></div>`;
     r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
-    r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); openBoard(); });
+    r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); closeListHygiene(); openBoard(); });
+    r.querySelector('.hyg').addEventListener('click', () => (listHyg.open ? closeListHygiene() : openListHygiene()));
+    r.querySelector('.hmenu').addEventListener('click', onListHygieneClick);
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
     anchor.parentElement.insertBefore(host, anchor);
     board.toggle = host;
+    listHyg.pk = null;
     syncToggle();
+    loadListHygiene();
+  }
+
+  // ---------- Hygiene in List view ----------
+  // The list grid can't be filtered without touching its markup, so the menu lists the affected tasks instead.
+  // Clicking one scrolls to its row and spotlights it; "Show on board" opens the board with that filter on.
+  const listHyg = { open: false, pk: null, model: null, expanded: null, err: '', seq: 0 };
+
+  async function loadListHygiene() {
+    const pk = qs().get('k'), seq = ++listHyg.seq;
+    if (listHyg.pk !== pk) { listHyg.model = null; listHyg.expanded = null; }
+    listHyg.pk = pk; listHyg.err = '';
+    scheduleCache.delete(String(pk));
+    try {
+      const s = await getSchedule(pk);
+      if (seq !== listHyg.seq) return;
+      listHyg.model = boardModel(s.raw);
+    } catch (e) {
+      if (seq !== listHyg.seq) return;
+      listHyg.err = String(e && e.message || e);
+    }
+    renderListHygiene();
+  }
+
+  // Open work per issue: assignment cards that aren't done, plus open tasks with nobody on them.
+  function listHygieneItems(m) {
+    const per = {};
+    HYGIENE.forEach(h => {
+      const rows = m.cards.filter(c => !c.done && h.card(c)).map(c => ({ taskKey: c.taskKey, taskId: c.taskId, taskName: c.taskName, group: c.group, order: c.order, who: c.userKey > 0 ? c.user : 'Empty assignment slot' }))
+        .concat(m.unassigned.filter(t => h.task(t)).map(t => ({ taskKey: t.taskKey, taskId: t.taskId, taskName: t.taskName, group: t.group, order: t.order, who: 'Nobody assigned' })));
+      rows.sort((a, b) => a.order - b.order);
+      per[h.key] = rows;
+    });
+    return per;
+  }
+
+  function renderListHygiene() {
+    if (!board.toggle) return;
+    const r = board.toggle.shadowRoot;
+    const n = r.querySelector('.hyg .n');
+    const m = listHyg.model;
+    n.textContent = m ? hygieneCounts(m).total : (listHyg.err ? '!' : '…');
+    r.querySelector('.hyg').classList.toggle('open', listHyg.open);
+    const menu = r.querySelector('.hmenu');
+    menu.hidden = !listHyg.open;
+    if (!listHyg.open) return;
+    const b = r.querySelector('.hyg').getBoundingClientRect();
+    menu.style.top = (b.bottom + 6) + 'px';
+    menu.style.left = Math.max(8, Math.min(b.left, innerWidth - 388)) + 'px';
+    if (!m) { menu.innerHTML = `<div class="msg">${listHyg.err ? 'Could not load the schedule: ' + esc(listHyg.err) : 'Loading…'}</div>`; return; }
+    const per = listHygieneItems(m);
+    menu.innerHTML = `<div class="htitle">Open work that has…</div>` + HYGIENE.map(h => {
+      const rows = per[h.key], exp = listHyg.expanded === h.key && rows.length;
+      return `<button type="button" class="hrow" data-k="${h.key}" ${rows.length ? '' : 'disabled'}><span class="caret">${rows.length ? (exp ? '▾' : '▸') : ''}</span><span class="hl">${h.label}<small>${h.hint}</small></span><span class="hc">${rows.length}</span></button>` +
+        (exp ? `<div class="items">${rows.map(x => `<button type="button" class="it" data-task="${x.taskKey}" title="Scroll to this task in the list"><span class="id">${esc(x.taskId)}</span>${esc(x.taskName)}<small>${esc([x.group, x.who].filter(Boolean).join(' · '))}</small></button>`).join('')}<button type="button" class="onboard" data-k="${h.key}">Show these on the board</button></div>` : '');
+    }).join('') + `<div class="hfoot">Click a task to jump to its row.</div>`;
+  }
+
+  function openListHygiene() {
+    listHyg.open = true;
+    renderListHygiene();
+    loadListHygiene();
+    setTimeout(() => {
+      document.addEventListener('mousedown', listHygOutside, true);
+      document.addEventListener('keydown', listHygKey, true);
+    }, 0);
+  }
+
+  function closeListHygiene() {
+    if (!listHyg.open) return;
+    listHyg.open = false;
+    document.removeEventListener('mousedown', listHygOutside, true);
+    document.removeEventListener('keydown', listHygKey, true);
+    renderListHygiene();
+  }
+
+  function listHygOutside(e) { if (!board.toggle || !e.composedPath().includes(board.toggle)) closeListHygiene(); }
+  function listHygKey(e) { if (e.key === 'Escape') closeListHygiene(); }
+
+  function onListHygieneClick(e) {
+    const t = e.target.closest('button');
+    if (!t) return;
+    if (t.classList.contains('hrow')) { listHyg.expanded = listHyg.expanded === t.dataset.k ? null : t.dataset.k; renderListHygiene(); return; }
+    if (t.classList.contains('onboard')) {
+      board.hyg = new Set([t.dataset.k]); board.user = 0; board.search = '';
+      closeListHygiene(); setBoardPref(true); openBoard(); return;
+    }
+    if (t.classList.contains('it')) {
+      const tk = t.dataset.task;
+      closeListHygiene();
+      const row = findTaskRow(tk);
+      if (!row) { alert('That task is not visible in the list right now. Expand its group, or use "Show these on the board".'); return; }
+      row.scrollIntoView({ block: 'center' });
+      setTimeout(() => spotlight(row), 350);
+    }
   }
 
   function syncToggle() {
@@ -863,6 +984,9 @@
     const r = board.toggle.shadowRoot;
     r.querySelector('.list').classList.toggle('on', !board.on);
     r.querySelector('.board').classList.toggle('on', board.on);
+    // The board has its own Hygiene menu with real filtering.
+    r.querySelector('.hyg').hidden = board.on;
+    if (board.on) closeListHygiene();
   }
 
   // Gantt, Templates and Task Detail only apply to the list, so hide them while the board is up.
@@ -906,6 +1030,7 @@
     closeModal();
     syncToggle();
     if (leaving) { board.projectKey = null; board.data = null; }
+    else if (wasOn) loadListHygiene();
     // The list underneath still shows statuses from before; let the app reload them.
     if (wasOn && board.dirty && !leaving) {
       board.dirty = false;
@@ -1130,8 +1255,7 @@
   }
 
   // Model: columns + cards from the raw getSchedule payload.
-  function boardModel() {
-    const raw = board.data;
+  function boardModel(raw = board.data) {
     const tasks = new Map((raw.tasks || []).map(t => [t.TaskKey, t]));
     const parents = new Set((raw.tasks || []).map(t => t.SummaryTaskKey).filter(Boolean));
     const tus = raw.projectTaskUserData || [];
