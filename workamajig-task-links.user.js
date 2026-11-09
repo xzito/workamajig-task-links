@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.16.1
+// @version      0.17.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.16.1';
+  const VERSION = '0.17.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -992,7 +992,7 @@
       .menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 14px; font: inherit; font-size: 13px; color: #333; cursor: pointer; }
       .menu button:hover { background: #f4f4f4; }
       .mbg { position: fixed; inset: 0; z-index: 20; background: rgba(20,20,20,.45); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; overflow-y: auto; }
-      .modal { width: min(720px, 100%); background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.3); border-top: 6px solid var(--c); display: flex; flex-direction: column; max-height: 88vh; }
+      .modal { width: min(1040px, 100%); background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.3); border-top: 6px solid var(--c); display: flex; flex-direction: column; max-height: 88vh; }
       .mhead { position: relative; padding: 18px 56px 12px 22px; border-bottom: 1px solid #eee; }
       .mtop { display: flex; gap: 8px; font-size: 12px; color: #888; }
       .mtitle { margin: 4px 0 10px; font-size: 20px; font-weight: 600; color: #222; line-height: 1.3; }
@@ -1000,7 +1000,28 @@
       .mx:hover { background: #f1f1f1; color: #222; }
       .mstat { display: flex; gap: 8px; align-items: center; }
       .mstatus { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px; border: 0; background: var(--c); color: #111; cursor: pointer; }
+      .mcols { display: flex; min-height: 0; flex: 1; }
+      .mcols > .mbody { flex: 1; min-width: 0; }
       .mbody { padding: 16px 22px; overflow-y: auto; }
+      .mtodo { flex: 0 0 310px; border-left: 1px solid #eee; background: #fcfcfc; padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+      .mtodo h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #999; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+      .mtodo h3 .count { text-transform: none; }
+      .tdlist { display: flex; flex-direction: column; gap: 2px; }
+      .td { display: flex; align-items: flex-start; gap: 8px; padding: 6px 4px; border-radius: 6px; font-size: 13px; color: #333; }
+      .td:hover { background: #f1f1f1; }
+      .td input { margin-top: 2px; accent-color: #7ab51d; cursor: pointer; }
+      .td.done .tds { color: #999; text-decoration: line-through; }
+      .tds { flex: 1; min-width: 0; line-height: 1.35; word-break: break-word; }
+      .tds small { display: block; font-size: 11px; color: #999; text-decoration: none; }
+      .tddel { border: 0; background: none; color: #bbb; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; visibility: hidden; }
+      .td:hover .tddel { visibility: visible; }
+      .tddel:hover { color: #b3261e; }
+      .tdmuted { font-size: 12px; color: #999; padding: 4px; }
+      .tdtoggle { margin: 6px 4px 2px; align-self: flex-start; font-size: 12px; }
+      .tdadd { display: flex; gap: 6px; margin-top: 8px; }
+      .tdnew { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #d0d0d0; border-radius: 8px; font: inherit; font-size: 13px; color: #222; background: #fff; }
+      .tdnew:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
+      @media (max-width: 820px) { .mcols { flex-direction: column; } .mtodo { flex-basis: auto; border-left: 0; border-top: 1px solid #eee; } }
       .mbody label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #999; margin: 14px 0 5px; }
       .mbody label:first-child { margin-top: 0; }
       .mgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 4px 20px; }
@@ -1032,6 +1053,7 @@
     ['keydown', 'keyup', 'keypress'].forEach(t => root.addEventListener(t, e => e.stopPropagation()));
     root.addEventListener('keydown', e => {
       if (!board.modal) return;
+      if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('tdnew')) { e.preventDefault(); addTodo(); return; }
       if (e.key === 'Escape') { e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && board.modal.editing) { e.preventDefault(); const b = root.querySelector('.msave'); if (b) b.click(); }
     });
@@ -1060,6 +1082,7 @@
       const s = await getSchedule(pk);
       if (seq !== board.seq || pk !== board.projectKey) return;
       board.data = s.raw;
+      board.todos = null; board.todosFor = null;
       renderBoard();
       } catch (e) {
       board.root.querySelector('.cols').innerHTML = `<div class="msg err">Could not load the schedule: ${esc(e && e.message || e)}</div>`;
@@ -1268,7 +1291,7 @@
   function renderModal() {
     const st = board.modal; if (!st || !board.data) return;
     const old = board.root.querySelector('.mbg');
-    if (old) { const ta = old.querySelector('textarea'); if (ta) st.draft = ta.value; }
+    if (old) { const ta = old.querySelector('textarea.mta'); if (ta) st.draft = ta.value; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; }
     const raw = board.data, ref = st.ref;
     const t = (raw.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
     const tu = ref.tuk ? (raw.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
@@ -1284,13 +1307,14 @@
          <div class="mrow"><button type="button" class="mbtn primary msave">Save description</button><button type="button" class="mbtn mcancel">Cancel</button><span class="mhint">⌘/Ctrl + Enter to save</span></div>`
       : desc ? `<div class="mdesc">${linkify(desc)}</div>${canEdit ? '<div class="mrow"><button type="button" class="mlink medit">Edit description</button></div>' : ''}`
       : `<div class="mnodesc">No description yet.${canEdit ? ' <button type="button" class="mlink madd">Add one</button>' : ''} <button type="button" class="mlink mask">Request details in a conversation</button></div>`;
+    const todoHtml = renderTodoPanel(ref.taskKey, st);
     const people = others.map(o => `<div class="mp">${avatarHtml(o.UserKey || -1, o.UserName, o.Initials)}<span>${esc((o.UserName || 'Unassigned slot').trim())}<small>${esc(o.StatusName || 'No status')}</small></span></div>`).join('');
     const html = `<div class="mbg"><div class="modal" role="dialog" aria-modal="true" style="--c:${color}">
       <div class="mhead"><div class="mtop"><span class="id">${esc(t.TaskID || '')}</span><span class="grp">${esc(t.SummaryTaskName || '')}</span></div>
         <button type="button" class="mx" title="Close (Esc)">×</button>
         <h2 class="mtitle">${esc(t.TaskName || '(task)')}</h2>
         <div class="mstat">${statusSel}${tu && +tu.PercComp ? `<span class="b">${+tu.PercComp}% complete</span>` : ''}</div></div>
-      <div class="mbody">
+      <div class="mcols"><div class="mbody">
         <div class="mgrid">
           ${tu ? `<div><label>Assignee</label><div class="mp">${avatarHtml(tu.UserKey || -1, tu.UserName, tu.Initials)}<span>${esc((tu.UserName || 'Unassigned slot').trim())}<small>${esc(tu.ServiceDescription || '')}</small></span></div></div>` : ''}
           <div><label>Due</label><div>${fmtDate((tu && tu.APlanComplete) || t.PlanComplete)}</div></div>
@@ -1300,7 +1324,7 @@
         <label>Task description</label>${descHtml}
         ${st.msg ? `<div class="mmsg">${esc(st.msg)}</div>` : ''}
         ${people ? `<label>Also on this task</label><div class="mpeople">${people}</div>` : ''}
-      </div>
+      </div>${todoHtml}</div>
       <div class="mfoot">
         ${tu ? `<button type="button" class="mbtn primary mopen">Open full assignment</button>` : ''}
         ${canEdit ? `<button type="button" class="mbtn ${tu ? '' : 'primary'} massign">${tu ? 'Manage assignees' : 'Assign people'}</button>` : ''}
@@ -1312,14 +1336,84 @@
     if (old) old.outerHTML = html; else board.root.querySelector('.wrap').insertAdjacentHTML('beforeend', html);
     const ta = board.root.querySelector('.mta');
     if (ta && st.editing) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    else if (st.focusTodo) { const ti = board.root.querySelector('.tdnew'); if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); } st.focusTodo = false; }
     const sel = board.root.querySelector('.mstatus');
     if (sel) sel.addEventListener('change', () => moveAssignment(ref.tuk, Number(sel.value)));
+  }
+
+  // ---- to-dos (same calls as the Schedule page: loadScheduleToDos / updateToDo / Production.deleteToDo) ----
+  async function loadTodos() {
+    const pk = board.projectKey;
+    if (board.todosFor === pk && board.todos) return;
+    board.todosFor = pk; board.todos = null;
+    try {
+      const res = await call('Modules.Projects.Schedule', 'loadScheduleToDos', { projectKey: Number(pk), copyToDoList: null }, true);
+      if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+      if (board.todosFor === pk) board.todos = (res.data && res.data.todos) || [];
+    } catch (e) { if (board.todosFor === pk) { board.todos = []; board.todoErr = 'Could not load to-dos: ' + (e && e.message || e); } }
+    if (board.modal) renderModal();
+  }
+  function renderTodoPanel(taskKey, st) {
+    const R = window.System && System.rights || {};
+    if (!(window.System && System.prefs && System.prefs.UseToDo) || R.prjViewToDos === false) return '';
+    if (!board.todos || board.todosFor !== board.projectKey) { loadTodos(); return '<aside class="mtodo"><h3>To-dos</h3><div class="tdmuted">Loading…</div></aside>'; }
+    const canAdd = R.prjEditToDos !== false, canDel = !!R.prjDeleteToDos;
+    const all = board.todos.filter(x => x.TaskKey === taskKey).sort((a, b) => (a.Completed - b.Completed) || ((a.DisplayOrder || 0) - (b.DisplayOrder || 0)));
+    const open = all.filter(x => !x.Completed), done = all.filter(x => x.Completed);
+    const row = x => `<div class="td ${x.Completed ? 'done' : ''}">
+        <input type="checkbox" class="tdchk" data-k="${x.ActivityKey}" ${x.Completed ? 'checked' : ''} ${canAdd ? '' : 'disabled'} title="${x.Completed ? 'Mark open' : 'Mark complete'}">
+        <span class="tds">${esc(x.Subject || '(no subject)')}${x.UserFullName && x.UserFullName !== 'Not Assigned' || x.ActivityDate || x.StatusName ? `<small>${[x.UserFullName && x.UserFullName !== 'Not Assigned' ? esc(x.UserFullName) : '', x.ActivityDate ? 'Due ' + esc(fmtDate(x.ActivityDate)) : '', x.StatusName ? esc(x.StatusName) : ''].filter(Boolean).join(' · ')}</small>` : ''}</span>
+        ${canDel ? `<button type="button" class="tddel" data-k="${x.ActivityKey}" title="Delete to-do">×</button>` : ''}</div>`;
+    return `<aside class="mtodo"><h3>To-dos <span class="count">${open.length}</span></h3>
+      ${board.todoErr ? `<div class="mmsg">${esc(board.todoErr)}</div>` : ''}
+      <div class="tdlist">${open.map(row).join('') || `<div class="tdmuted">${all.length ? 'All done.' : 'No to-dos on this task yet.'}</div>`}
+      ${done.length ? `<button type="button" class="mlink tdtoggle">${st.showDoneTodos ? 'Hide' : 'Show'} ${done.length} completed</button>${st.showDoneTodos ? done.map(row).join('') : ''}` : ''}</div>
+      ${canAdd ? `<div class="tdadd"><input class="tdnew" type="text" placeholder="Add a to-do and press Enter" value="${esc(st.tdDraft || '')}"><button type="button" class="mbtn tdplus" title="Add to-do">Add</button></div>` : ''}
+      ${st.tdMsg ? `<div class="mmsg">${esc(st.tdMsg)}</div>` : ''}</aside>`;
+  }
+  async function addTodo() {
+    const st = board.modal; if (!st) return;
+    const input = board.root.querySelector('.tdnew'); const subject = (input && input.value || '').trim();
+    if (!subject) return;
+    const pk = Number(board.projectKey), taskKey = st.ref.taskKey;
+    input.disabled = true; st.tdMsg = '';
+    try {
+      const res = await call('Modules.Projects.Schedule', 'updateToDo', { projectKey: pk, todos: [{ ActivityKey: -1, ProjectKey: pk, TaskKey: taskKey, Subject: subject, Completed: 0, StatusName: '', rowstate: 'I' }] }, true);
+      if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+      const map = ((res.data && res.data.keyMap) || []).find(x => x.OldKey === -1);
+      board.todos.push({ ActivityKey: map ? map.NewKey : Date.now(), TaskKey: taskKey, Subject: subject, Completed: 0, StatusName: '', DisplayOrder: 999 });
+      st.tdDraft = ''; st.focusTodo = true;
+    } catch (e) { st.tdMsg = 'Could not add: ' + (e && e.message || e); st.tdDraft = subject; }
+    renderModal();
+  }
+  async function toggleTodo(key, completed) {
+    const st = board.modal; const td = (board.todos || []).find(x => x.ActivityKey === key); if (!td || !st) return;
+    const prev = td.Completed; td.Completed = completed ? 1 : 0; st.tdMsg = ''; renderModal();
+    try {
+      const row = Object.assign({}, td, { ProjectKey: Number(board.projectKey), StatusName: td.StatusName || '', rowstate: 'U' });
+      const res = await call('Modules.Projects.Schedule', 'updateToDo', { projectKey: Number(board.projectKey), todos: [row] }, true);
+      if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+    } catch (e) { td.Completed = prev; st.tdMsg = 'Could not update: ' + (e && e.message || e); renderModal(); }
+  }
+  async function deleteTodo(key) {
+    const st = board.modal; const td = (board.todos || []).find(x => x.ActivityKey === key); if (!td || !st) return;
+    if (!confirm(`Delete the to-do "${td.Subject}"? This can't be undone.`)) return;
+    try {
+      const res = await call('Modules.Projects.Production', 'deleteToDo', { ActivityKey: key, ProjectKey: Number(board.projectKey), TaskKey: td.TaskKey }, true);
+      if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+      board.todos = board.todos.filter(x => x.ActivityKey !== key); st.tdMsg = '';
+    } catch (e) { st.tdMsg = 'Could not delete: ' + (e && e.message || e); }
+    renderModal();
   }
 
   async function onModalClick(e) {
     const t = e.target, st = board.modal; if (!st) return;
     const ref = st.ref;
     if (t.classList.contains('mbg') || t.classList.contains('mx')) { closeModal(); return; }
+    if (t.classList.contains('tdplus')) { addTodo(); return; }
+    if (t.classList.contains('tddel')) { deleteTodo(Number(t.dataset.k)); return; }
+    if (t.classList.contains('tdtoggle')) { st.showDoneTodos = !st.showDoneTodos; renderModal(); return; }
+    if (t.classList.contains('tdchk')) { toggleTodo(Number(t.dataset.k), t.checked); return; }
     if (t.closest('a[href]')) return; // links in the description
     const tu = ref.tuk ? (board.data.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
     const task = (board.data.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
