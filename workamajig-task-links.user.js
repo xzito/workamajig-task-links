@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.14.1
+// @version      0.15.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.14.1';
+  const VERSION = '0.15.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -488,9 +488,12 @@
       a, button { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; line-height: 1; padding: 6px 10px; border: 1px solid #d6d6d6; border-radius: 999px; background: #fff; color: #333; cursor: pointer; text-decoration: none; }
       a:hover, button:hover { background: #f4f4f4; border-color: #c4c4c4; }
       svg { width: 13px; height: 13px; flex: none; }
+      .status { font: inherit; font-size: 12px; font-weight: 600; line-height: 1; padding: 6px 26px 6px 12px; border-radius: 999px; border: 1px solid rgba(0,0,0,.08); background: var(--c, #ddd) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23222' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center / 9px 6px; color: #111; cursor: pointer; appearance: none; -webkit-appearance: none; }
+      .status:disabled { opacity: .6; cursor: default; }
       [hidden] { display: none !important; }
     </style>
     <div class="row" hidden>
+      <select class="status" title="Assignment status (same as dragging on the Today or project board)" hidden></select>
       <a class="open" title="Open this task in the project schedule, spotlighted"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>Open in schedule</a>
       <button type="button" class="ctask" title="Copy a link that opens the schedule and spotlights this task"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 013.6 3.6L10.6 8M9 11.5l-1.2 1.2a2.6 2.6 0 01-3.6-3.6L5.4 8"/></svg>Copy task link</button>
       <button type="button" class="casg" title="Copy the link to this assignment page"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 013.6 3.6L10.6 8M9 11.5l-1.2 1.2a2.6 2.6 0 01-3.6-3.6L5.4 8"/></svg>Copy assignment link</button>
@@ -510,7 +513,44 @@
       root.querySelector('.ctask').addEventListener('click', () => copy(taskUrl, 'task link'));
       root.querySelector('.casg').addEventListener('click', () => copy(urls.assignment(key), 'assignment link'));
       root.querySelector('.row').hidden = false;
+      setupStatusSelect(root.querySelector('.status'), a, key);
     }).catch(() => host.remove());
+  }
+
+  // Assignment status dropdown: same single-assignment call as the Today board and the project board.
+  async function setupStatusSelect(sel, a, tuk) {
+    const pg = () => document.querySelector('page.open[data-aid="projects.production.assignment"]');
+    const ta = () => { const p = pg(); const m = p && p.view && p.view.module && p.view.module.model; return m && m.taskAssignment; };
+    let statuses = [];
+    try { statuses = ((await getSchedule(a.projectKey)).raw.taskUserStatus || []).map(x => ({ k: x.k, l: x.l })); } catch (e) {}
+    if (!statuses.length) return;
+    const current = () => { const t = ta(); return t && t.si && t.si.TaskUserStatusKey > 0 ? t.si.TaskUserStatusKey : 0; };
+    const paint = () => {
+      const k = current();
+      sel.innerHTML = (k ? '' : '<option value="0">No status</option>') + statuses.map(x => `<option value="${x.k}" ${x.k === k ? 'selected' : ''}>${esc(x.l)}</option>`).join('');
+      const st = statuses.find(x => x.k === k);
+      sel.style.setProperty('--c', (st && STATUS_COLORS[st.l]) || '#e2e2e2');
+    };
+    paint();
+    sel.hidden = false;
+    sel.addEventListener('change', async () => {
+      const k = Number(sel.value), st = statuses.find(x => x.k === k);
+      if (!k || !st) return;
+      sel.disabled = true;
+      try {
+        const res = await call('WJAPP.Modules.Project.Traffic', 'updateAssignmentStatus', { TaskUserKey: Number(tuk), TaskUserStatusKey: k }, true);
+        if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+        // Update the page's own model so its "% complete" button and anything bound to it refresh.
+        const t = ta();
+        if (t && t.si) { t.si.TaskUserStatusKey = k; t.si.StatusName = st.l; if (res.data && res.data.PercComp != null) t.si.PercComp = res.data.PercComp; t.fire(); }
+        scheduleCache.delete(String(a.projectKey));
+        toast(`Status: ${st.l}` + (res.data && res.data.PercComp != null ? ` · ${res.data.PercComp}% complete` : ''));
+      } catch (err) {
+        toast('Could not change the status: ' + (err && err.message || err));
+      }
+      sel.disabled = false;
+      paint();
+    });
   }
 
   // "Description of Work" tab: say so when the task has no description, and offer the next step.
