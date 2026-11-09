@@ -1414,12 +1414,16 @@
   function renderListConvs(menu) {
     const cv = listHyg.convs, m = listHyg.model;
     if (!cv) { menu.innerHTML = `<div class="msg">${listHyg.convErr ? 'Could not load conversations: ' + esc(listHyg.convErr) : 'Loading…'}</div>`; return; }
-    const tasks = new Map(((m && m.cards) || []).map(c => [c.taskKey, c]).concat(((m && m.unassigned) || []).map(t => [t.taskKey, t])));
-    const rows = [...cv.entries()].sort((a, b) => b[1].latest.localeCompare(a[1].latest));
+    // Task info, and whether all of its work is finished (completed tasks are usually hidden in the list).
+    const tasks = new Map();
+    ((m && m.cards) || []).forEach(c => { const x = tasks.get(c.taskKey); tasks.set(c.taskKey, { taskId: c.taskId, taskName: c.taskName, done: (x ? x.done : true) && c.done }); });
+    ((m && m.unassigned) || []).forEach(t => tasks.set(t.taskKey, { taskId: t.taskId, taskName: t.taskName, done: false }));
+    const isDone = tk => { const t = tasks.get(tk); return t ? t.done : true; };
+    const rows = [...cv.entries()].sort((a, b) => (isDone(a[0]) - isDone(b[0])) || b[1].latest.localeCompare(a[1].latest));
     if (!rows.length) { menu.innerHTML = `<div class="htitle">Tasks with conversations</div><div class="msg">No task on this project has a conversation yet.</div>`; return; }
     menu.innerHTML = `<div class="htitle">Tasks with conversations</div><div class="items" style="background:#fff;border:0">` + rows.map(([tk, c]) => {
       const t = tasks.get(tk) || {};
-      const meta = [convWord(c.threads), c.unread ? `${c.unread} unread` : '', c.latest ? 'latest ' + fmtWhen(c.latest) : ''].filter(Boolean).join(' · ');
+      const meta = [isDone(tk) ? 'Completed' : '', convWord(c.threads), c.unread ? `${c.unread} unread` : '', c.latest ? 'latest ' + fmtWhen(c.latest) : ''].filter(Boolean).join(' · ');
       return `<div class="cvrow"><button type="button" class="it" data-task="${tk}" title="Scroll to this task in the list"><span class="id">${esc(t.taskId || '')}</span>${esc(t.taskName || c.subject || 'Task')}${c.unread ? ' <span class="ud"></span>' : ''}<small>${esc(meta)}</small></button><button type="button" class="ot" data-rk="${c.latestRk}" title="Open the latest thread: ${esc(c.subject)}">Open latest</button></div>`;
     }).join('') + `</div><button type="button" class="onboard" data-conv="1">Show these on the board</button><div class="hfoot">Click a task to jump to its row.</div>`;
   }
