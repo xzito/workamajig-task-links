@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.28.0';
+  const VERSION = '0.29.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1025,17 +1025,19 @@
   };
 
   // ----- main column: this task's conversations, threaded, with a reply box per thread -----
-  function asgConvHost(a) {
+  // opts.compact: smaller heading for the board modal. opts.onNavigate: called before opening another screen.
+  function asgConvHost(a, opts = {}) {
     const host = document.createElement('div');
-    host.id = 'wjl-asgconv';
+    if (!opts.compact) host.id = 'wjl-asgconv';
     host.dataset.tk = String(a.taskKey);
-    host.style.cssText = 'display:block;margin:8px 0 28px;max-width:920px';
+    host.style.cssText = opts.compact ? 'display:block;margin:4px 0 0' : 'display:block;margin:8px 0 28px;max-width:920px';
+    const nav = (...args) => { if (opts.onNavigate) opts.onNavigate(); openApp(...args); };
     const root = host.attachShadow({ mode: 'open' });
     const st = { posts: null, err: '', open: new Set(), more: new Set(), drafts: {} };
     root.innerHTML = `<style>${SHADOW_BASE}
       :host { font-size: 13px; }
       .top { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
-      .top h2 { font-size: 20px; font-weight: 500; color: #333; margin: 0; }
+      .top h2 { font-size: ${opts.compact ? '11px' : '20px'}; font-weight: ${opts.compact ? 600 : 500}; color: ${opts.compact ? '#8a8a8a' : '#333'}; margin: 0; ${opts.compact ? 'text-transform: uppercase; letter-spacing: .05em;' : ''} }
       .top .sp { flex: 1; }
       .thread { border: 1px solid #e6e6e6; border-radius: 10px; background: #fff; margin: 0 0 14px; overflow: hidden; }
       .subj { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px; background: #fafafa; border-bottom: 1px solid #eee; font-weight: 600; font-size: 13px; color: #333; }
@@ -1145,15 +1147,15 @@
       const t = e.target;
       if (t.classList.contains('tog')) { const k = Number(t.dataset.k); st.open.has(k) ? st.open.delete(k) : st.open.add(k); return render(); }
       if (t.classList.contains('moreb')) { st.more.add(Number(t.dataset.rk)); return render(); }
-      if (t.classList.contains('newpost')) { openApp('projects.diary.add', a.projectKey, { taskKey: a.taskKey }); return; }
-      if (t.classList.contains('open') && t.dataset.rk && plainClick(e)) { e.preventDefault(); openApp('projects.diary.thread', Number(t.dataset.rk)); return; }
+      if (t.classList.contains('newpost')) { nav('projects.diary.add', a.projectKey, { taskKey: a.taskKey }); return; }
+      if (t.classList.contains('open') && t.dataset.rk && plainClick(e)) { e.preventDefault(); nav('projects.diary.thread', Number(t.dataset.rk)); return; }
       if (t.classList.contains('rbtn')) {
         const rk = Number(t.dataset.rk);
         const ta = root.querySelector(`textarea[data-root="${rk}"]`);
         const text = (ta && ta.value || '').trim();
         if (text) { try { sessionStorage.setItem(SS_REPLY, JSON.stringify({ parent: rk, text, ts: Date.now() })); } catch (err) {} }
         st.drafts[rk] = '';
-        openApp('projects.diary.reply', rk);
+        nav('projects.diary.reply', rk);
       }
     });
     ['click', 'mousedown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
@@ -1648,8 +1650,18 @@
     // Hide while another page or panel sits on top of the schedule.
     const pages = [...document.querySelectorAll('page.open')];
     const covered = pages.length > 1 && pages[pages.length - 1] !== schedulePage();
-    if (!r || !r.width || covered || board.suspended) { board.host.style.visibility = 'hidden'; return; }
+    if (!r || !r.width || covered || board.suspended) { board.host.style.visibility = 'hidden'; board.wasCovered = board.wasCovered || covered; return; }
     board.host.style.visibility = 'visible';
+    // Back from a reply / new post / thread opened from the card modal: reopen that card with fresh conversations.
+    if (board.wasCovered) {
+      board.wasCovered = false;
+      if (board.reopen && board.data) {
+        const ref = board.reopen.ref; board.reopen = null;
+        if (board.convs) loadBoardConvs();
+        board.modal = { ref, editing: false, draft: '', msg: '', reloadConv: true, scrollConv: true };
+        board.host.style.zIndex = '40'; renderModal();
+      }
+    }
     const h = r.height > 150 ? r.height : innerHeight - r.top - 8;
     Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: Math.max(220, h) + 'px' });
   }
@@ -1692,7 +1704,9 @@
       .b.nd { background: #fff4d6; color: #8a5a00; }
       .b.tdb { background: #e6f1fb; color: #0c447c; }
       .b.tdb.done { background: #eaf3de; color: #3b6d11; }
-      .b.cvb { background: #eeedfe; color: #3c3489; }
+      .b.cvb { background: #eeedfe; color: #3c3489; cursor: pointer; }
+      .b.cvb:hover { text-decoration: underline; }
+      .mconvslot { margin-top: 18px; padding-top: 14px; border-top: 1px solid #eee; }
       .b.cvb.unread { background: #534ab7; color: #fff; }
       .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
       .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
@@ -1825,6 +1839,7 @@
 
   async function loadBoard() {
     const pk = board.projectKey, seq = ++board.seq;
+    board.convHosts = null; // conversation sections reload on the next modal open
     if (!board.data) board.root.querySelector('.cols').innerHTML = '<div class="msg">Loading board…</div>';
     scheduleCache.delete(String(pk));
     try {
@@ -2030,6 +2045,8 @@
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return; // let the link open in a new tab
     e.preventDefault();
     openModal({ tuk: Number(card.dataset.tuk) || 0, taskKey: Number(card.dataset.task) });
+    // Clicking the conversations badge jumps straight to the conversations.
+    if (t.closest('.cvb') && board.modal) { board.modal.scrollConv = true; renderModal(); }
   }
 
   // ---- card details modal ----
@@ -2075,6 +2092,7 @@
         <label>Task description</label>${descHtml}
         ${st.msg ? `<div class="mmsg">${esc(st.msg)}</div>` : ''}
         ${people ? `<label>Also on this task</label><div class="mpeople">${people}</div>` : ''}
+        <div class="mconvslot"></div>
       </div>${todoHtml}</div>
       <div class="mfoot">
         ${tu ? `<span class="msplit"><button type="button" class="mbtn primary mopen">Open full assignment</button><a class="mbtn primary mnewtab" href="${urls.assignment(tu.TaskUserKey)}" target="_blank" rel="noopener" title="Open the assignment in a new tab" aria-label="Open the assignment in a new tab"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M12 9.5v3a1 1 0 01-1 1H3.5a1 1 0 01-1-1V5a1 1 0 011-1h3"/></svg></a></span>` : ''}
@@ -2085,6 +2103,19 @@
         ${tu ? `<button type="button" class="mbtn mcopya" title="Copy the link to this assignment page"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.75A1.25 1.25 0 009.25 2.5h-5.5A1.25 1.25 0 002.5 3.75v5.5a1.25 1.25 0 001.25 1.25H5.5"/></svg>Copy assignment link</button>` : ''}
       </div></div></div>`;
     if (old) old.outerHTML = html; else board.root.querySelector('.wrap').insertAdjacentHTML('beforeend', html);
+    // Conversations: one host per task, kept across re-renders so drafts and expanded posts survive.
+    const slot = board.root.querySelector('.mconvslot');
+    if (slot) {
+      board.convHosts = board.convHosts || new Map();
+      let ch = board.convHosts.get(ref.taskKey);
+      if (!ch) {
+        ch = asgConvHost({ projectKey: Number(board.projectKey), taskKey: ref.taskKey }, { compact: true, onNavigate: () => { board.reopen = { ref }; closeModal(); } });
+        board.convHosts.set(ref.taskKey, ch);
+      } else if (st.reloadConv) ch.wjlLoad && ch.wjlLoad();
+      st.reloadConv = false;
+      slot.appendChild(ch);
+      if (st.scrollConv) { st.scrollConv = false; setTimeout(() => slot.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50); }
+    }
     const ta = board.root.querySelector('.mta');
     if (ta && st.editing) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
     else if (st.focusTodo) { const ti = board.root.querySelector('.tdnew'); if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); } st.focusTodo = false; }
@@ -2214,6 +2245,7 @@
         taskUrl: urls.task(board.projectKey, ref.taskKey), assignmentUrl: ref.tuk ? urls.assignment(ref.tuk) : urls.task(board.projectKey, ref.taskKey), pm, ts: Date.now() };
       try { sessionStorage.setItem(SS_POST, JSON.stringify(req)); } catch (err) {}
       closeModal();
+      board.reopen = { ref };
       openApp('projects.diary.add', Number(board.projectKey), { taskKey: ref.taskKey });
       return;
     }
