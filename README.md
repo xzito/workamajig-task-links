@@ -43,6 +43,10 @@ A **List / Board** switch in the Schedule toolbar (next to the Gantt toggle) sho
 
 On an assignment page (`projects.production.assignment`) the script also:
 
+- **New layout** (v0.20): the task description and its conversations share one column, and a right-hand rail holds the due date, hours, to-dos and Project Details. Workamajig's own side column is moved to the right with CSS (nothing is moved in its markup), its donut charts are hidden, and the To Do List and Conversations tabs are hidden because both now show inline. **Classic layout** in the link row switches back (remembered per browser), and **New layout** switches it on again.
+  - **Conversations** load with the same calls as Workamajig's own screens (`getConversations` for the task, then `loadThread` for each thread), so every reply shows, oldest first, with avatars, times and an Unread tag. Long posts collapse with Show more, threads with more than four posts show the first and last two, and post HTML is cleaned down to simple formatting and links. **Open thread** goes to the native thread screen, and **New conversation** opens the native New Post screen linked to this task.
+  - **Reply box** under each thread: type and press **Reply** to open Workamajig's reply screen with your text already in the editor and the usual recipients. Nothing is posted until you press **Post Reply** there.
+  - **To-dos** in the rail work like the board modal: tick to complete, type and press Enter to add, hover × to delete (asks first; needs the delete right).
 - **Status dropdown** (v0.15) at the start of the link row: changes the assignment's status with the same call as the boards, then shows the percent complete Workamajig actually saved.
 - **Task links under the title** (v0.12): **Open in schedule** (opens the project schedule and spotlights this task; Cmd/Ctrl-click for a new tab), **Copy task link**, **Copy assignment link**.
 
