@@ -1650,18 +1650,8 @@
     // Hide while another page or panel sits on top of the schedule.
     const pages = [...document.querySelectorAll('page.open')];
     const covered = pages.length > 1 && pages[pages.length - 1] !== schedulePage();
-    if (!r || !r.width || covered || board.suspended) { board.host.style.visibility = 'hidden'; board.wasCovered = board.wasCovered || covered; return; }
+    if (!r || !r.width || covered || board.suspended) { board.host.style.visibility = 'hidden'; return; }
     board.host.style.visibility = 'visible';
-    // Back from a reply / new post / thread opened from the card modal: reopen that card with fresh conversations.
-    if (board.wasCovered) {
-      board.wasCovered = false;
-      if (board.reopen && board.data) {
-        const ref = board.reopen.ref; board.reopen = null;
-        if (board.convs) loadBoardConvs();
-        board.modal = { ref, editing: false, draft: '', msg: '', reloadConv: true, scrollConv: true };
-        board.host.style.zIndex = '40'; renderModal();
-      }
-    }
     const h = r.height > 150 ? r.height : innerHeight - r.top - 8;
     Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: Math.max(220, h) + 'px' });
   }
@@ -1848,6 +1838,14 @@
       board.data = s.raw;
       board.todos = null; board.todosFor = null;
       renderBoard();
+      // Back from a reply / new post / thread opened from a card modal (leaving the Schedule rebuilds the board):
+      // reopen that card, scrolled to its conversations.
+      const ro = board.reopen;
+      if (ro && ro.pk === pk && Date.now() - ro.ts < 30 * 60000) {
+        board.reopen = null;
+        board.modal = { ref: ro.ref, editing: false, draft: '', msg: '', scrollConv: true };
+        board.host.style.zIndex = '40'; renderModal();
+      } else if (ro && ro.pk !== pk) board.reopen = null;
       loadTodos();
       loadBoardConvs();
       } catch (e) {
@@ -2109,7 +2107,7 @@
       board.convHosts = board.convHosts || new Map();
       let ch = board.convHosts.get(ref.taskKey);
       if (!ch) {
-        ch = asgConvHost({ projectKey: Number(board.projectKey), taskKey: ref.taskKey }, { compact: true, onNavigate: () => { board.reopen = { ref }; closeModal(); } });
+        ch = asgConvHost({ projectKey: Number(board.projectKey), taskKey: ref.taskKey }, { compact: true, onNavigate: () => { board.reopen = { ref, pk: board.projectKey, ts: Date.now() }; closeModal(); } });
         board.convHosts.set(ref.taskKey, ch);
       } else if (st.reloadConv) ch.wjlLoad && ch.wjlLoad();
       st.reloadConv = false;
@@ -2250,7 +2248,7 @@
         taskUrl: urls.task(board.projectKey, ref.taskKey), assignmentUrl: ref.tuk ? urls.assignment(ref.tuk) : urls.task(board.projectKey, ref.taskKey), pm, ts: Date.now() };
       try { sessionStorage.setItem(SS_POST, JSON.stringify(req)); } catch (err) {}
       closeModal();
-      board.reopen = { ref };
+      board.reopen = { ref, pk: board.projectKey, ts: Date.now() };
       openApp('projects.diary.add', Number(board.projectKey), { taskKey: ref.taskKey });
       return;
     }
