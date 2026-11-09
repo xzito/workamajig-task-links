@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.25.1';
+  const VERSION = '0.26.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1216,6 +1216,9 @@
       return;
     }
     ensureBoardToggle();
+    checkListFilter();
+    // Keep the "Showing …" chip current (e.g. when Hide Completed Tasks is toggled).
+    if (board.toggle && !board.on) { const slot = board.toggle.shadowRoot.querySelector('.fslot'); const html = listFilterSummary(); if (slot && slot.innerHTML !== html) slot.innerHTML = html; }
     const pk = qs().get('k');
     if (board.on && board.projectKey !== pk) { closeBoard(true); }
     let pending = null; try { pending = sessionStorage.getItem(SS_KEY); } catch (e) {}
@@ -1277,7 +1280,16 @@
       .conv { border: 1px solid #cfcfcf; border-radius: 8px; white-space: nowrap; }
       .conv .n { color: #185fa5; font-weight: 600; margin-left: 2px; }
       .conv .u:not(:empty) { margin-left: 6px; font-size: 11px; font-weight: 600; color: #fff; background: #1a8fbf; border-radius: 999px; padding: 1px 6px; }
-      .conv.open { background: #e6f1fb; border-color: #85b7eb; color: #0c447c; }
+      .conv.open, .conv.on { background: #e6f1fb; border-color: #85b7eb; color: #0c447c; }
+      .hyg.on { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
+      .fslot:empty { display: none; }
+      .fchip { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; font-weight: 600; color: #0c447c; background: #e6f1fb; border: 1px solid #85b7eb; border-radius: 8px; padding: 0 0 0 10px; }
+      .fchip .fh { font-weight: 400; color: #4a6f94; }
+      .fchip .fx { border: 0; border-left: 1px solid #85b7eb; border-radius: 0 7px 7px 0; background: #fff; color: #0c447c; font-weight: 600; }
+      .fchip .fx:hover { background: #f0f6fc; }
+      .hrow.act { background: #f0f6fc; }
+      .hrow.act .caret { color: #1a8fbf; font-size: 12px; }
+      .fx2 { border: 0; background: none; padding: 0; color: #1a8fbf; text-decoration: underline; font-size: 12px; cursor: pointer; }
       .cvrow { display: flex; align-items: flex-start; }
       .cvrow .it { flex: 1; min-width: 0; }
       .ot { flex: none; border: 0; background: none; color: #1a8fbf; font-size: 11px; text-decoration: underline; padding: 6px 14px 0 4px; cursor: pointer; white-space: nowrap; }
@@ -1302,8 +1314,9 @@
       .onboard { display: block; border: 0; background: none; padding: 4px 14px 2px 34px; color: #1a8fbf; font-size: 12px; text-decoration: underline; cursor: pointer; }
       .hfoot { padding: 8px 14px 2px; font-size: 11px; color: #999; }
       .msg { padding: 10px 14px; color: #888; font-size: 12px; }
-    </style><div class="wrap"><button type="button" class="conv" title="Tasks that have conversations">Conversations <span class="n">…</span><span class="u"></span> ▾</button><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div>`;
+    </style><div class="wrap"><span class="fslot"></span><button type="button" class="conv" title="Tasks that have conversations">Conversations <span class="n">…</span><span class="u"></span> ▾</button><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div>`;
     r.querySelector('.hyg').addEventListener('click', () => (listHyg.open === 'hyg' ? closeListHygiene() : openListHygiene('hyg')));
+    r.querySelector('.fslot').addEventListener('click', e => { if (e.target.classList.contains('fx')) clearListFilter(); });
     r.querySelector('.conv').addEventListener('click', () => (listHyg.open === 'conv' ? closeListHygiene() : openListHygiene('conv')));
     // The menu lives in its own layer on <body>: inside the page, an ancestor turns position:fixed into
     // "relative to the page panel", which pushed the menu down and clipped it at the panel's right edge.
@@ -1391,6 +1404,9 @@
     const cvUnread = cv ? [...cv.values()].filter(c => c.unread).length : 0;
     r.querySelector('.conv .n').textContent = cv ? cv.size : (listHyg.convErr ? '!' : '…');
     r.querySelector('.conv .u').textContent = cvUnread ? `${cvUnread} unread` : '';
+    r.querySelector('.fslot').innerHTML = board.on ? '' : listFilterSummary();
+    r.querySelector('.hyg').classList.toggle('on', !!(listFilter && listFilter.kind === 'hyg'));
+    r.querySelector('.conv').classList.toggle('on', !!(listFilter && listFilter.kind === 'conv'));
     r.querySelector('.hyg').classList.toggle('open', listHyg.open === 'hyg');
     r.querySelector('.conv').classList.toggle('open', listHyg.open === 'conv');
     const menu = board.hygMenu && board.hygMenu.shadowRoot.querySelector('.hmenu');
@@ -1403,29 +1419,83 @@
     if (listHyg.open === 'conv') { renderListConvs(menu); return; }
     if (!m) { menu.innerHTML = `<div class="msg">${listHyg.err ? 'Could not load the schedule: ' + esc(listHyg.err) : 'Loading…'}</div>`; return; }
     const per = listHygieneItems(m);
-    menu.innerHTML = `<div class="htitle">Open work that has…</div>` + HYGIENE.map(h => {
-      const rows = per[h.key], exp = listHyg.expanded === h.key && rows.length;
-      return `<button type="button" class="hrow" data-k="${h.key}" ${rows.length ? '' : 'disabled'}><span class="caret">${rows.length ? (exp ? '▾' : '▸') : ''}</span><span class="hl">${h.label}<small>${h.hint}</small></span><span class="hc">${rows.length}</span></button>` +
-        (exp ? `<div class="items">${rows.map(x => `<button type="button" class="it" data-task="${x.taskKey}" title="Scroll to this task in the list"><span class="id">${esc(x.taskId)}</span>${esc(x.taskName)}<small>${esc([x.group, x.who].filter(Boolean).join(' · '))}</small></button>`).join('')}<button type="button" class="onboard" data-k="${h.key}">Show these on the board</button></div>` : '');
-    }).join('') + `<div class="hfoot">Click a task to jump to its row.</div>`;
+    const act = listFilter && listFilter.kind === 'hyg' ? listFilter.key : null;
+    menu.innerHTML = `<div class="htitle">Filter the list to open work that has…</div>` + HYGIENE.map(h => {
+      const n = per[h.key].length;
+      return `<button type="button" class="hrow ${act === h.key ? 'act' : ''}" data-k="${h.key}" ${n ? '' : 'disabled'}><span class="caret">${act === h.key ? '✓' : ''}</span><span class="hl">${h.label}<small>${h.hint}</small></span><span class="hc">${n}</span></button>`;
+    }).join('') + `<div class="hfoot">${act ? '<button type="button" class="fx2">Clear filter</button>' : 'Click an issue to show only those tasks.'}</div>`;
   }
 
-  // Tasks with conversations, most recent activity first. Clicking one jumps to its row; "Open latest" opens that thread.
+  // Conversations menu: filter the list to tasks with conversations, or with unread posts.
   function renderListConvs(menu) {
-    const cv = listHyg.convs, m = listHyg.model;
+    const cv = listHyg.convs;
     if (!cv) { menu.innerHTML = `<div class="msg">${listHyg.convErr ? 'Could not load conversations: ' + esc(listHyg.convErr) : 'Loading…'}</div>`; return; }
-    // Task info, and whether all of its work is finished (completed tasks are usually hidden in the list).
-    const tasks = new Map();
-    ((m && m.cards) || []).forEach(c => { const x = tasks.get(c.taskKey); tasks.set(c.taskKey, { taskId: c.taskId, taskName: c.taskName, done: (x ? x.done : true) && c.done }); });
-    ((m && m.unassigned) || []).forEach(t => tasks.set(t.taskKey, { taskId: t.taskId, taskName: t.taskName, done: false }));
-    const isDone = tk => { const t = tasks.get(tk); return t ? t.done : true; };
-    const rows = [...cv.entries()].sort((a, b) => (isDone(a[0]) - isDone(b[0])) || b[1].latest.localeCompare(a[1].latest));
-    if (!rows.length) { menu.innerHTML = `<div class="htitle">Tasks with conversations</div><div class="msg">No task on this project has a conversation yet.</div>`; return; }
-    menu.innerHTML = `<div class="htitle">Tasks with conversations</div><div class="items" style="background:#fff;border:0">` + rows.map(([tk, c]) => {
-      const t = tasks.get(tk) || {};
-      const meta = [isDone(tk) ? 'Completed' : '', convWord(c.threads), c.unread ? `${c.unread} unread` : '', c.latest ? 'latest ' + fmtWhen(c.latest) : ''].filter(Boolean).join(' · ');
-      return `<div class="cvrow"><button type="button" class="it" data-task="${tk}" title="Scroll to this task in the list"><span class="id">${esc(t.taskId || '')}</span>${esc(t.taskName || c.subject || 'Task')}${c.unread ? ' <span class="ud"></span>' : ''}<small>${esc(meta)}</small></button><button type="button" class="ot" data-rk="${c.latestRk}" title="Open the latest thread: ${esc(c.subject)}">Open latest</button></div>`;
-    }).join('') + `</div><button type="button" class="onboard" data-conv="1">Show these on the board</button><div class="hfoot">Click a task to jump to its row.</div>`;
+    const all = cv.size, unread = [...cv.values()].filter(c => c.unread).length;
+    const act = listFilter && listFilter.kind === 'conv' ? listFilter.key : null;
+    const row = (k, label, hint, n) => `<button type="button" class="hrow ${act === k ? 'act' : ''}" data-cv="${k}" ${n ? '' : 'disabled'}><span class="caret">${act === k ? '✓' : ''}</span><span class="hl">${label}<small>${hint}</small></span><span class="hc cvc">${n}</span></button>`;
+    menu.innerHTML = `<div class="htitle">Filter the list to tasks…</div>` +
+      row('any', 'With conversations', 'At least one conversation thread', all) +
+      row('unread', 'With unread posts', 'A thread has posts you have not read', unread) +
+      `<div class="hfoot">${act ? '<button type="button" class="fx2">Clear filter</button>' : 'Click one to show only those tasks.'}</div>`;
+  }
+
+  // ---------- List filter: Workamajig's own schedule filter, narrowed to a set of tasks ----------
+  // The schedule's data source has a filter function (it handles Search and Hide Completed Tasks). We wrap it so a
+  // row must also be one of our tasks or one of their parent groups. Nothing in the grid's markup is touched; the
+  // app redraws the list itself, exactly as it does for Search.
+  let listFilter = null; // { kind, key, label, leaf:Set, ds }
+  function scheduleDs() { const pg = schedulePage(); const m = pg && pg.view && pg.view.module && pg.view.module.model; return m && m.scheduleTasks; }
+  function installFilterWrap(ds) {
+    const fo = ds && ds.options && ds.options.filter;
+    if (!fo || typeof fo.f !== 'function') return false;
+    if (!fo.wjlWrap || fo.f !== fo.wjlWrap) {
+      const orig = fo.f;
+      fo.wjlOrig = orig;
+      fo.wjlWrap = function (item, idx, src) {
+        const ok = orig.call(this, item, idx, src);
+        return ok && (!fo.wjlKeys || fo.wjlKeys.has(item.TaskKey));
+      };
+      fo.f = fo.wjlWrap;
+    }
+    return true;
+  }
+  function applyListFilter(kind, key, label, leafKeys) {
+    const ds = scheduleDs();
+    if (!ds || !installFilterWrap(ds)) { toast('Could not filter the list on this page'); return; }
+    const src = ds.source || [];
+    const byKey = new Map(src.map(t => [t.TaskKey, t]));
+    const keys = new Set();
+    leafKeys.forEach(k => { let x = byKey.get(k); while (x && !keys.has(x.TaskKey)) { keys.add(x.TaskKey); x = byKey.get(x.SummaryTaskKey); } });
+    ds.options.filter.wjlKeys = keys;
+    listFilter = { kind, key, label, leaf: new Set(leafKeys), ds };
+    ds.refresh(true);
+    closeListHygiene();
+    renderListHygiene();
+  }
+  function clearListFilter() {
+    const lf = listFilter; listFilter = null;
+    if (lf && lf.ds && lf.ds.options && lf.ds.options.filter) { lf.ds.options.filter.wjlKeys = null; try { lf.ds.refresh(true); } catch (e) {} }
+    renderListHygiene();
+  }
+  // Drop the filter if its page went away; re-wrap if the app rebuilt its filter (e.g. after a settings reload).
+  function checkListFilter() {
+    if (!listFilter) return;
+    const ds = scheduleDs();
+    if (!ds || ds !== listFilter.ds) { listFilter = null; renderListHygiene(); return; }
+    const fo = ds.options && ds.options.filter;
+    if (fo && fo.f !== fo.wjlWrap) { const keys = fo.wjlKeys; installFilterWrap(ds); fo.wjlKeys = keys || null; if (!fo.wjlKeys) { listFilter = null; renderListHygiene(); } else ds.refresh(true); }
+  }
+  // "Showing …" chip: how many matching tasks are visible, and how many Hide Completed Tasks keeps hidden.
+  function listFilterSummary() {
+    if (!listFilter) return '';
+    const ds = listFilter.ds, pg = schedulePage();
+    const m = pg && pg.view && pg.view.module && pg.view.module.model;
+    const hide = !!(m && m.searchTasks && m.searchTasks.si && Number(m.searchTasks.si.hideCompleted) === 1);
+    const byKey = new Map((ds.source || []).map(t => [t.TaskKey, t]));
+    const leaf = [...listFilter.leaf].filter(k => byKey.has(k));
+    const hidden = hide ? leaf.filter(k => +byKey.get(k).PercComp >= 100).length : 0;
+    const shown = leaf.length - hidden;
+    return `<span class="fchip" title="Only these tasks are shown in the list">${esc(listFilter.label)}: ${shown} task${shown === 1 ? '' : 's'}${hidden ? ` <span class="fh">(${hidden} completed hidden)</span>` : ''}<button type="button" class="fx" title="Show all tasks again">Clear</button></span>`;
   }
 
   function openListHygiene(mode) {
@@ -1451,26 +1521,23 @@
 
   function onListHygieneClick(e) {
     const t = e.target.closest('button');
-    if (!t) return;
-    if (t.classList.contains('hrow')) { listHyg.expanded = listHyg.expanded === t.dataset.k ? null : t.dataset.k; renderListHygiene(); return; }
-    if (t.classList.contains('ot')) { closeListHygiene(); openApp('projects.diary.thread', Number(t.dataset.rk)); return; }
-    if (t.classList.contains('onboard') && t.dataset.conv) {
-      board.onlyConv = true; board.user = 0;
-      closeListHygiene(); setBoardPref(true); openBoard(); return;
+    if (!t || t.disabled) return;
+    if (t.classList.contains('fx2')) { clearListFilter(); closeListHygiene(); return; }
+    if (t.classList.contains('hrow') && t.dataset.k) {
+      const h = HYGIENE.find(x => x.key === t.dataset.k); if (!h || !listHyg.model) return;
+      if (listFilter && listFilter.kind === 'hyg' && listFilter.key === h.key) { clearListFilter(); closeListHygiene(); return; }
+      applyListFilter('hyg', h.key, h.label, listHygieneItems(listHyg.model)[h.key].map(x => x.taskKey));
+      return;
     }
-    if (t.classList.contains('onboard')) {
-      board.hyg = new Set([t.dataset.k]); board.user = 0;
-      closeListHygiene(); setBoardPref(true); openBoard(); return;
-    }
-    if (t.classList.contains('it')) {
-      const tk = t.dataset.task;
-      closeListHygiene();
-      const row = findTaskRow(tk);
-      if (!row) { alert('That task is not visible in the list right now (it may be completed and hidden, or inside a collapsed group). Use "Show these on the board" instead.'); return; }
-      row.scrollIntoView({ block: 'center' });
-      setTimeout(() => spotlight(row), 350);
+    if (t.classList.contains('hrow') && t.dataset.cv) {
+      const cv = listHyg.convs; if (!cv) return;
+      const k = t.dataset.cv;
+      if (listFilter && listFilter.kind === 'conv' && listFilter.key === k) { clearListFilter(); closeListHygiene(); return; }
+      const keys = [...cv.entries()].filter(([, c]) => k === 'any' || c.unread).map(([tk]) => tk);
+      applyListFilter('conv', k, k === 'any' ? 'With conversations' : 'Unread conversations', keys);
     }
   }
+
 
   function syncToggle() {
     if (board.seg) {
@@ -1505,6 +1572,7 @@
     const pk = qs().get('k');
     if (board.projectKey !== pk) board.user = 0;
     { const el = nativeSearch(); board.search = el ? el.value : ''; }
+    if (listFilter) clearListFilter();
     board.on = true; board.projectKey = pk;
     syncToggle();
     setListOnlyButtons(true);
