@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.21.1';
+  const VERSION = '0.22.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1377,7 +1377,7 @@
     if (!t) return;
     if (t.classList.contains('hrow')) { listHyg.expanded = listHyg.expanded === t.dataset.k ? null : t.dataset.k; renderListHygiene(); return; }
     if (t.classList.contains('onboard')) {
-      board.hyg = new Set([t.dataset.k]); board.user = 0; board.search = '';
+      board.hyg = new Set([t.dataset.k]); board.user = 0;
       closeListHygiene(); setBoardPref(true); openBoard(); return;
     }
     if (t.classList.contains('it')) {
@@ -1420,9 +1420,8 @@
     const pg = schedulePage();
     if (!pg) return;
     const pk = qs().get('k');
-    if (board.projectKey !== pk) {
-      board.user = 0; board.search = '';
-    }
+    if (board.projectKey !== pk) board.user = 0;
+    { const el = nativeSearch(); board.search = el ? el.value : ''; }
     board.on = true; board.projectKey = pk;
     syncToggle();
     setListOnlyButtons(true);
@@ -1453,8 +1452,24 @@
     }
   }
 
+  // Workamajig's own Search box (top left) filters the board too, so List and Board share one search.
+  const nativeSearch = () => { const pg = schedulePage(); return pg && pg.querySelector('input[name="searchText"][data-source-target="scheduleTasks"]'); };
+  function syncNativeSearch() {
+    const el = nativeSearch();
+    const v = el ? el.value : '';
+    if (v !== board.search) { board.search = v; renderBoard(); }
+  }
+  function clearNativeSearch() {
+    const el = nativeSearch();
+    if (!el || !el.value) return;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('search', { bubbles: true }));
+  }
+
   function positionBoard() {
     if (!board.host) return;
+    if (board.on && board.data) syncNativeSearch();
     const grid = document.querySelector('page.open[data-aid="projects.schedule.edit2"] #grdProjectSchedule');
     const r = grid && grid.getBoundingClientRect();
     // Hide while another page or panel sits on top of the schedule.
@@ -1619,7 +1634,6 @@
       const sp = document.createElement('span'); sp.className = 'av'; sp.style.background = '#8a9bab'; sp.textContent = img.dataset.ini || '?';
       img.replaceWith(sp);
     }, true);
-    root.addEventListener('input', e => { if (e.target.classList.contains('search')) { board.search = e.target.value; renderBoard(); } });
     root.addEventListener('change', e => { if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
@@ -1709,7 +1723,6 @@
       .concat([...people.values()].sort((a, b) => b.n - a.n).map(p =>
         `<button type="button" class="chip ${board.user === p.key ? 'on' : ''}" data-user="${p.key}">${avatarHtml(p.key, p.name, p.initials)}${esc(p.name.split(' ')[0])} <span class="n">${p.n}</span></button>`));
     const bar = board.root.querySelector('.bar');
-    const hadFocus = board.root.activeElement && board.root.activeElement.classList.contains('search');
     bar.innerHTML = `<div class="chips">${chips.join('')}</div>
       <label class="chk"><input type="checkbox" class="showc" ${showDone() ? 'checked' : ''}> Show completed</label>
       <button type="button" class="icon collapse-all" title="Collapse every column">Collapse all</button>
@@ -1718,8 +1731,7 @@
         <div class="htitle">Show open work that has…</div>
         ${HYGIENE.map(h => `<label class="hrow"><input type="checkbox" class="hchk" data-k="${h.key}" ${board.hyg.has(h.key) ? 'checked' : ''}><span class="hl">${h.label}<small>${h.hint}</small></span><span class="hc">${hc.per[h.key]}</span></label>`).join('')}
         <div class="hfoot"><button type="button" class="mlink hall">Any issue</button><button type="button" class="mlink hnone">Clear</button></div></div>` : ''}</span>`; })()}
-      <input class="search" type="search" placeholder="Filter tasks…" value="${esc(board.search)}">
-      <button type="button" class="icon refresh" title="Reload from Workamajig">↻</button>
+      <button type="button" class="icon refresh" style="margin-left:auto" title="Reload from Workamajig">↻</button>
       ${(() => {
         const parts = [];
         if (board.user) { const p = people.get(board.user); parts.push(esc(p ? p.name : 'one person')); }
@@ -1727,7 +1739,6 @@
         if (q) parts.push('matching “' + esc(board.search.trim()) + '”');
         return parts.length ? `<div class="fsum">Filtered: showing ${parts.join(' · ')} <button type="button" class="mlink fclear">Clear filters</button></div>` : '';
       })()}`;
-    if (hadFocus) { const s = bar.querySelector('.search'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
     board.model = m;
     renderColumns();
     if (board.modal) renderModal();
@@ -1805,7 +1816,7 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
-    if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.search = ''; board.hygOpen = false; renderBoard(); return; }
+    if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.search = ''; clearNativeSearch(); board.hygOpen = false; renderBoard(); return; }
     if (t.closest && t.closest('.hyg')) { board.hygOpen = !board.hygOpen; renderBoard(); return; }
     if (t.classList.contains('hall')) { HYGIENE.forEach(h => board.hyg.add(h.key)); renderBoard(); return; }
     if (t.classList.contains('hnone')) { board.hyg.clear(); renderBoard(); return; }
