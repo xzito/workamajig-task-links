@@ -1741,7 +1741,7 @@
         if (board.user) { const p = people.get(board.user); parts.push(esc(p ? p.name : 'one person')); }
         if (board.hyg.size) parts.push(HYGIENE.filter(h => board.hyg.has(h.key)).map(h => h.label.toLowerCase()).join(' or '));
         if (q) parts.push('matching “' + esc(board.search.trim()) + '”');
-        if (board.onlyTodos) parts.push('with open to-dos');
+        if (board.onlyTodos) parts.push('tasks with open to-dos');
         return parts.length ? `<div class="fsum">Filtered: showing ${parts.join(' · ')} <button type="button" class="mlink fclear">Clear filters</button></div>` : '';
       })()}`;
     board.model = m;
@@ -1935,8 +1935,8 @@
     const m = todoStats(); const s = m && m.get(taskKey);
     if (!s) return '';
     return s.open
-      ? `<span class="b tdb" title="${s.open} open of ${s.total} to-dos">${s.total - s.open}/${s.total} to-dos</span>`
-      : `<span class="b tdb done" title="All ${s.total} to-dos done">✓ ${s.total}/${s.total} to-dos</span>`;
+      ? `<span class="b tdb" title="${s.open} open, ${s.total - s.open} done">${s.open} open to-do${s.open > 1 ? 's' : ''}</span>`
+      : `<span class="b tdb done" title="All ${s.total} to-dos done">✓ To-dos done</span>`;
   }
   function renderTodoPanel(taskKey, st) {
     const R = window.System && System.rights || {};
