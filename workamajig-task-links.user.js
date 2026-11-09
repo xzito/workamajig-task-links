@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.13.0
+// @version      0.14.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.13.0';
+  const VERSION = '0.14.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -801,13 +801,28 @@
       button { font: inherit; font-size: 12px; padding: 7px 12px; border: 0; background: #fff; color: #444; cursor: pointer; line-height: 1; }
       button + button { border-left: 1px solid #cfcfcf; }
       button.on { background: #333; color: #fff; font-weight: 600; }
-    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div>`;
+      .nd { margin-left: 8px; font: inherit; font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid #e0a82e; background: #fff4d6; color: #6b4b00; cursor: pointer; line-height: 1; white-space: nowrap; }
+      .nd:hover { background: #ffecb8; }
+      [hidden] { display: none !important; }
+    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div><button type="button" class="nd" hidden title="Open tasks with no description — show them on the board"></button>`;
+    r.querySelector('.nd').addEventListener('click', () => { board.noDesc = true; setBoardPref(true); if (board.on) renderBoard(); else openBoard(); });
     r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
     r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); openBoard(); });
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
     anchor.parentElement.insertBefore(host, anchor);
     board.toggle = host;
     syncToggle();
+    updateToggleCount();
+  }
+  // "N missing descriptions" pill beside the switch; refreshed whenever schedule data loads.
+  async function updateToggleCount() {
+    if (!board.toggle) return;
+    const pill = board.toggle.shadowRoot.querySelector('.nd');
+    let raw = board.data;
+    if (!raw) { try { raw = (await getSchedule(qs().get('k'))).raw; } catch (e) { return; } }
+    const n = missingDescTasks(raw).length;
+    pill.hidden = !n;
+    pill.textContent = n === 1 ? '1 task missing a description' : n + ' tasks missing descriptions';
   }
   function syncToggle() {
     if (!board.toggle) return;
@@ -882,6 +897,9 @@
       .search { margin-left: auto; width: 200px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font: inherit; font-size: 12px; color: #333; background: #fff; }
       .search:focus { outline: none; border-color: #7ab51d; }
       .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer; user-select: none; }
+      .icon.nodesc .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
+      .icon.nodesc.on { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
+      .b.nd { background: #fff4d6; color: #8a5a00; }
       .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
       .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
       .col { flex: 0 0 280px; width: 280px; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
@@ -995,9 +1013,17 @@
       if (seq !== board.seq || pk !== board.projectKey) return;
       board.data = s.raw;
       renderBoard();
+      updateToggleCount();
     } catch (e) {
       board.root.querySelector('.cols').innerHTML = `<div class="msg err">Could not load the schedule: ${esc(e && e.message || e)}</div>`;
     }
+  }
+
+  const hasDesc = t => !!String(t && t.Description || '').replace(/<[^>]*>/g, '').trim();
+  // Open leaf tasks with no description (summary rows and finished tasks don't count).
+  function missingDescTasks(raw) {
+    const parents = new Set((raw.tasks || []).map(t => t.SummaryTaskKey).filter(Boolean));
+    return (raw.tasks || []).filter(t => !parents.has(t.TaskKey) && +t.PercComp < 100 && !hasDesc(t));
   }
 
   // Model: columns + cards from the raw getSchedule payload.
@@ -1017,11 +1043,11 @@
       const days = due ? Math.round((due - today) / 864e5) : null;
       return { tuk: tu.TaskUserKey, taskKey: tu.TaskKey, status, done, user: (tu.UserName || '').trim(), userKey: tu.UserKey || -1,
         initials: tu.Initials || '', service: tu.ServiceDescription || '', actual: +tu.ActualHours || 0, planned: +tu.Hours || 0,
-        pc: +tu.PercComp || 0, due, days, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0 };
+        pc: +tu.PercComp || 0, due, days, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0, noDesc: !hasDesc(t) };
     });
     const assigned = new Set(tus.map(tu => tu.TaskKey));
     const unassigned = (raw.tasks || []).filter(t => !parents.has(t.TaskKey) && !assigned.has(t.TaskKey) && +t.PercComp < 100)
-      .map(t => ({ taskKey: t.TaskKey, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0,
+      .map(t => ({ taskKey: t.TaskKey, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0, noDesc: !hasDesc(t),
         due: t.PlanComplete ? new Date(String(t.PlanComplete).slice(0, 10) + 'T00:00:00') : null }));
     return { statuses, cards, unassigned };
   }
@@ -1042,6 +1068,7 @@
       <label class="chk"><input type="checkbox" class="showc" ${showDone() ? 'checked' : ''}> Show completed</label>
       <button type="button" class="icon collapse-all" title="Collapse every column">Collapse all</button>
       <button type="button" class="icon expand-all" title="Expand every column">Expand all</button>
+      <button type="button" class="icon nodesc ${board.noDesc ? 'on' : ''}" title="Show only open tasks that have no description">No description <span class="n">${missingDescTasks(board.data).length}</span></button>
       <input class="search" type="search" placeholder="Filter tasks…" value="${esc(board.search)}">
       <button type="button" class="icon refresh" title="Reload from Workamajig">↻</button>`;
     if (hadFocus) { const s = bar.querySelector('.search'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
@@ -1053,7 +1080,7 @@
   function renderColumns() {
     const m = board.model; if (!m) return;
     const q = board.search.trim().toLowerCase();
-    const match = c => (!board.user || c.userKey === board.user) &&
+    const match = c => (!board.user || c.userKey === board.user) && (!board.noDesc || c.noDesc) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const sortCards = (a, b) => ((a.days == null) - (b.days == null)) || ((a.days ?? 0) - (b.days ?? 0)) || (a.order - b.order);
     const cols = [];
@@ -1065,7 +1092,7 @@
       cols.push({ key: st.key, name: st.name, color: st.color, cards, drop: true });
     });
     if (!board.user) {
-      const un = m.unassigned.filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
+      const un = m.unassigned.filter(t => (!board.noDesc || t.noDesc)) .filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
       if (un.length) cols.push({ key: -2, name: 'Not assigned', color: '#9b9b9b', cards: un, drop: false, unassigned: true });
     }
     cols.forEach(col => { col.collapsed = isCollapsed(col.name); });
@@ -1101,7 +1128,7 @@
       <div class="top"><span class="id">${esc(c.taskId)}</span><span class="grp">${esc(c.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(c.taskName)}</div>
-      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}</div>
+      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}${c.noDesc && !c.done ? '<span class="b nd">No description</span>' : ''}</div>
       ${c.pc ? `<div class="prog"><i style="width:${Math.min(100, c.pc)}%"></i></div>` : ''}
       <div class="foot">${avatarHtml(c.userKey, c.user, c.initials)}<span class="who">${esc(c.user || 'Unassigned slot')}<small>${esc(c.service)}</small></span>
       <span class="h ${overHrs ? 'over' : ''}" title="Logged / planned hours">${fmtH(c.actual)} / ${fmtH(c.planned)}</span></div></a>`;
@@ -1112,7 +1139,7 @@
       <div class="top"><span class="id">${esc(t.taskId)}</span><span class="grp">${esc(t.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(t.taskName)}</div>
-      <div class="badges">${label ? `<span class="b">Due ${label}</span>` : ''}<span class="b">No assignee</span></div></div>`;
+      <div class="badges">${label ? `<span class="b">Due ${label}</span>` : ''}<span class="b">No assignee</span>${t.noDesc ? '<span class="b nd">No description</span>' : ''}</div></div>`;
   }
 
   function onBoardClick(e) {
@@ -1122,6 +1149,8 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
+    const nd = t.closest && t.closest('.nodesc');
+    if (nd) { board.noDesc = !board.noDesc; renderBoard(); return; }
     if (t.classList.contains('collapse-all') || t.classList.contains('expand-all')) {
       const v = t.classList.contains('collapse-all');
       (board.colNames || []).forEach(n => { board.collapsed[n] = v; });
@@ -1235,7 +1264,7 @@
         await saveTaskDescription(board.projectKey, ref.taskKey, text, st.base || '');
         task.Description = text; st.editing = false; st.msg = ''; toast('Description saved');
       } catch (err) { st.msg = 'Could not save: ' + (err && err.message || err); st.draft = text; }
-      renderModal();
+      renderBoard(); updateToggleCount();
     }
   }
 
