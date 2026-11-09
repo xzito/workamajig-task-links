@@ -1218,7 +1218,7 @@
     ensureBoardToggle();
     checkListFilter();
     // Keep the "Showing …" chip current (e.g. when Hide Completed Tasks is toggled).
-    if (board.toggle && !board.on) { const slot = board.toggle.shadowRoot.querySelector('.fslot'); const html = listFilterSummary(); if (slot && slot.innerHTML !== html) slot.innerHTML = html; }
+    if (board.toggle && !board.on) { const slot = board.toggle.shadowRoot.querySelector('.fslot'); const html = listFilterSummary(); if (slot && slot.dataset.html !== html) { slot.dataset.html = html; slot.innerHTML = html; } }
     const pk = qs().get('k');
     if (board.on && board.projectKey !== pk) { closeBoard(true); }
     let pending = null; try { pending = sessionStorage.getItem(SS_KEY); } catch (e) {}
@@ -1404,7 +1404,7 @@
     const cvUnread = cv ? [...cv.values()].filter(c => c.unread).length : 0;
     r.querySelector('.conv .n').textContent = cv ? cv.size : (listHyg.convErr ? '!' : '…');
     r.querySelector('.conv .u').textContent = cvUnread ? `${cvUnread} unread` : '';
-    r.querySelector('.fslot').innerHTML = board.on ? '' : listFilterSummary();
+    { const slot = r.querySelector('.fslot'), html = board.on ? '' : listFilterSummary(); if (slot.dataset.html !== html) { slot.dataset.html = html; slot.innerHTML = html; } }
     r.querySelector('.hyg').classList.toggle('on', !!(listFilter && listFilter.kind === 'hyg'));
     r.querySelector('.conv').classList.toggle('on', !!(listFilter && listFilter.kind === 'conv'));
     r.querySelector('.hyg').classList.toggle('open', listHyg.open === 'hyg');
