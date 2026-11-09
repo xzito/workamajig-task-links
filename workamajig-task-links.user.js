@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.9.0
+// @version      0.10.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.9.0';
+  const VERSION = '0.10.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -68,7 +68,7 @@
           });
           byTuk.set(tu.TaskUserKey, tu.TaskKey);
         }
-        return { tasks, slots, byTuk, users };
+        return { tasks, slots, byTuk, users, raw: d };
       }).catch(e => { scheduleCache.delete(projectKey); throw e; }));
     }
     return scheduleCache.get(projectKey);
@@ -702,6 +702,413 @@
     }
   }
 
+  // ---------- Project board (kanban) on the Schedule ----------
+  // One card per assignment (status lives on the assignment, not the task). Drawn as a fixed overlay over the
+  // schedule grid inside a Shadow DOM; the grid itself is never touched. Status changes use the same single-row
+  // call as the Today board (WJAPP.Modules.Project.Traffic.updateAssignmentStatus).
+  const BOARD_PREF = 'wjl.boardMode';
+  const COMPLETED_KEY = 1048;
+  const STATUS_COLORS = { 'Backlog': '#C2C2C2', 'Ready': '#B3DC6C', 'In Progress': '#16A765', 'Ready for Review/Blocked': '#F83A22', 'Completed': '#A47AE2' };
+  const FALLBACK_COLORS = ['#7aa7d9', '#e0a82e', '#d07ad9', '#5cc2c2', '#9b9b9b'];
+  const board = { on: false, host: null, root: null, toggle: null, projectKey: null, data: null, user: 0, search: '',
+    showCompleted: false, timer: null, dirty: false, drag: null, seq: 0 };
+  const boardPref = () => { try { return localStorage.getItem(BOARD_PREF) === '1'; } catch (e) { return false; } };
+  const setBoardPref = v => { try { localStorage.setItem(BOARD_PREF, v ? '1' : '0'); } catch (e) {} };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const schedulePage = () => document.querySelector('page.open[data-aid="projects.schedule.edit2"]');
+
+  function boardTick() {
+    if (aid() !== 'projects.schedule.edit2') {
+      if (board.on || board.host) closeBoard(true);
+      return;
+    }
+    ensureBoardToggle();
+    const pk = qs().get('k');
+    if (board.on && board.projectKey !== pk) { closeBoard(true); }
+    let pending = null; try { pending = sessionStorage.getItem(SS_KEY); } catch (e) {}
+    if (!board.on && boardPref() && !pending && document.querySelector('page.open #grdProjectSchedule grid-row[data-key]')) openBoard();
+  }
+
+  function ensureBoardToggle() {
+    if (board.toggle && board.toggle.isConnected) return;
+    const anchor = document.querySelector('page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"]');
+    if (!anchor) return;
+    const host = document.createElement('span');
+    host.id = 'wjl-board-toggle';
+    host.style.cssText = 'display:inline-flex;vertical-align:middle;margin-right:10px';
+    const r = host.attachShadow({ mode: 'open' });
+    r.innerHTML = `<style>
+      :host { all: initial; font-family: inherit; color-scheme: light; }
+      * { box-sizing: border-box; font-family: inherit; }
+      .seg { display: inline-flex; border: 1px solid #cfcfcf; border-radius: 8px; overflow: hidden; background: #fff; }
+      button { font: inherit; font-size: 12px; padding: 7px 12px; border: 0; background: #fff; color: #444; cursor: pointer; line-height: 1; }
+      button + button { border-left: 1px solid #cfcfcf; }
+      button.on { background: #333; color: #fff; font-weight: 600; }
+    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div>`;
+    r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
+    r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); openBoard(); });
+    ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
+    anchor.parentElement.insertBefore(host, anchor);
+    board.toggle = host;
+    syncToggle();
+  }
+  function syncToggle() {
+    if (!board.toggle) return;
+    const r = board.toggle.shadowRoot;
+    r.querySelector('.list').classList.toggle('on', !board.on);
+    r.querySelector('.board').classList.toggle('on', board.on);
+  }
+
+  function openBoard() {
+    const pg = schedulePage();
+    if (!pg) return;
+    const pk = qs().get('k');
+    if (board.projectKey !== pk) {
+      board.user = 0; board.search = '';
+      const hc = pg.querySelector('input[name="hideCompleted"]');
+      board.showCompleted = hc ? !hc.checked : false;
+    }
+    board.on = true; board.projectKey = pk;
+    syncToggle();
+    if (!board.host) buildBoardHost();
+    board.host.style.display = 'block';
+    positionBoard();
+    clearInterval(board.timer);
+    board.timer = setInterval(positionBoard, 250);
+    loadBoard();
+  }
+
+  function closeBoard(leaving) {
+    const wasOn = board.on;
+    board.on = false;
+    clearInterval(board.timer);
+    if (board.host) board.host.style.display = 'none';
+    closeCardMenu();
+    syncToggle();
+    if (leaving) { board.projectKey = null; board.data = null; }
+    // The list underneath still shows statuses from before; let the app reload them.
+    if (wasOn && board.dirty && !leaving) {
+      board.dirty = false;
+      const rb = document.querySelector('page.open[data-aid="projects.schedule.edit2"] button[data-action="refreshData"]');
+      if (rb) rb.click();
+    }
+  }
+
+  function positionBoard() {
+    if (!board.host) return;
+    const grid = document.querySelector('page.open[data-aid="projects.schedule.edit2"] #grdProjectSchedule');
+    const r = grid && grid.getBoundingClientRect();
+    // Hide while another page or panel sits on top of the schedule.
+    const pages = [...document.querySelectorAll('page.open')];
+    const covered = pages.length > 1 && pages[pages.length - 1] !== schedulePage();
+    if (!r || !r.width || covered) { board.host.style.visibility = 'hidden'; return; }
+    board.host.style.visibility = 'visible';
+    const h = r.height > 150 ? r.height : innerHeight - r.top - 8;
+    Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: Math.max(220, h) + 'px' });
+  }
+
+  function buildBoardHost() {
+    const host = document.createElement('div');
+    host.id = 'wjl-board';
+    host.style.cssText = 'position:fixed;z-index:30;display:none';
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `<style>
+      :host { all: initial; font-family: inherit; color-scheme: light; }
+      * { box-sizing: border-box; font-family: inherit; }
+      .wrap { position: absolute; inset: 0; display: flex; flex-direction: column; background: #fff; color: #333; font-size: 13px; line-height: 1.4; }
+      .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 2px 10px; border-bottom: 1px solid #eee; }
+      .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+      .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 3px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; font-size: 12px; color: #444; }
+      .chip.all { padding: 5px 12px; }
+      .chip.on { background: #333; border-color: #333; color: #fff; }
+      .chip .n { color: #999; font-size: 11px; }
+      .chip.on .n { color: #ccc; }
+      .search { margin-left: auto; width: 200px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font: inherit; font-size: 12px; color: #333; background: #fff; }
+      .search:focus { outline: none; border-color: #7ab51d; }
+      .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer; user-select: none; }
+      .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
+      .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
+      .col { flex: 0 0 280px; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
+      .col.collapsed { flex-basis: 52px; cursor: pointer; }
+      .col.drop { border-color: var(--c); }
+      .head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px; border-bottom: 2px solid var(--c); }
+      .pill { background: var(--c); color: #111; font-weight: 600; font-size: 12px; padding: 4px 12px; border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .count { font-size: 11px; color: #666; background: rgba(0,0,0,.06); border-radius: 999px; padding: 1px 7px; }
+      .hrs { margin-left: auto; font-size: 11px; color: #777; white-space: nowrap; }
+      .col.collapsed .head { flex-direction: column; border-bottom: 0; height: 100%; padding: 10px 6px; }
+      .col.collapsed .pill { writing-mode: vertical-rl; transform: rotate(180deg); padding: 12px 4px; }
+      .col.collapsed .hrs, .col.collapsed .list { display: none; }
+      .list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+      .empty { color: #aaa; font-size: 12px; text-align: center; padding: 18px 6px; border: 1px dashed #d6d6d6; border-radius: 8px; }
+      .card { display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #e3e3e3; border-left: 4px solid var(--c); border-radius: 8px; padding: 10px 10px 8px; box-shadow: 0 1px 2px rgba(0,0,0,.05); cursor: grab; position: relative; }
+      .card:hover { box-shadow: 0 3px 10px rgba(0,0,0,.10); }
+      .card.dragging { opacity: .45; }
+      .card.busy { opacity: .6; pointer-events: none; }
+      .card.static { cursor: default; border-left-style: dashed; }
+      .top { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: #888; padding-right: 22px; }
+      .id { font-weight: 600; color: #666; white-space: nowrap; }
+      .grp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .name { font-weight: 600; font-size: 13px; color: #1a8fbf; margin: 3px 0 6px; }
+      .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+      .b { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #f1f1f1; color: #555; }
+      .b.over { background: #fde4e4; color: #b3261e; }
+      .b.today { background: #efe6fb; color: #6a3fb5; }
+      .prog { height: 4px; background: #eee; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+      .prog i { display: block; height: 100%; background: #3bb3d6; }
+      .foot { display: flex; align-items: center; gap: 8px; }
+      .av { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: #ddd; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: #fff; }
+      .who { min-width: 0; font-size: 12px; color: #444; line-height: 1.2; }
+      .who small { display: block; color: #999; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .h { margin-left: auto; font-size: 11px; color: #666; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .h.over { color: #b3261e; }
+      .more { position: absolute; top: 6px; right: 6px; border: 0; background: transparent; color: #999; cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 5px; }
+      .more:hover { background: #f0f0f0; color: #333; }
+      .menu { position: fixed; z-index: 5; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.15); padding: 4px 0; min-width: 220px; }
+      .menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 14px; font: inherit; font-size: 13px; color: #333; cursor: pointer; }
+      .menu button:hover { background: #f4f4f4; }
+      .msg { padding: 30px; color: #888; text-align: center; }
+      .msg.err { color: #b3261e; }
+    </style><div class="wrap"><div class="bar"></div><div class="cols"><div class="msg">Loading board…</div></div></div>`;
+    ['keydown', 'keyup', 'keypress'].forEach(t => root.addEventListener(t, e => e.stopPropagation()));
+    root.addEventListener('click', onBoardClick);
+    // Avatar images that fail to load fall back to initials.
+    root.addEventListener('error', e => {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || !img.classList.contains('av')) return;
+      const sp = document.createElement('span'); sp.className = 'av'; sp.style.background = '#8a9bab'; sp.textContent = img.dataset.ini || '?';
+      img.replaceWith(sp);
+    }, true);
+    root.addEventListener('input', e => { if (e.target.classList.contains('search')) { board.search = e.target.value; renderColumns(); } });
+    root.addEventListener('change', e => { if (e.target.classList.contains('showc')) { board.showCompleted = e.target.checked; renderBoard(); } });
+    root.addEventListener('dragstart', onDragStart);
+    root.addEventListener('dragend', () => { root.querySelectorAll('.dragging').forEach(x => x.classList.remove('dragging')); root.querySelectorAll('.col.drop').forEach(x => x.classList.remove('drop')); board.drag = null; });
+    root.addEventListener('dragover', onDragOver);
+    root.addEventListener('dragleave', e => { const col = e.target.closest && e.target.closest('.col'); if (col && !col.contains(e.relatedTarget)) col.classList.remove('drop'); });
+    root.addEventListener('drop', onDrop);
+    document.body.appendChild(host);
+    board.host = host; board.root = root;
+  }
+
+  async function loadBoard() {
+    const pk = board.projectKey, seq = ++board.seq;
+    if (!board.data) board.root.querySelector('.cols').innerHTML = '<div class="msg">Loading board…</div>';
+    scheduleCache.delete(String(pk));
+    try {
+      const s = await getSchedule(pk);
+      if (seq !== board.seq || pk !== board.projectKey) return;
+      board.data = s.raw;
+      renderBoard();
+    } catch (e) {
+      board.root.querySelector('.cols').innerHTML = `<div class="msg err">Could not load the schedule: ${esc(e && e.message || e)}</div>`;
+    }
+  }
+
+  // Model: columns + cards from the raw getSchedule payload.
+  function boardModel() {
+    const raw = board.data;
+    const tasks = new Map((raw.tasks || []).map(t => [t.TaskKey, t]));
+    const parents = new Set((raw.tasks || []).map(t => t.SummaryTaskKey).filter(Boolean));
+    const tus = raw.projectTaskUserData || [];
+    const statuses = (raw.taskUserStatus || []).map((st, i) => ({ key: st.k, name: st.l, color: STATUS_COLORS[st.l] || FALLBACK_COLORS[i % FALLBACK_COLORS.length] }));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const cards = tus.map(tu => {
+      const t = tasks.get(tu.TaskKey) || {};
+      const status = tu.TaskUserStatusKey > 0 ? tu.TaskUserStatusKey : 0;
+      const done = status === COMPLETED_KEY || (!status && (+tu.PercComp >= 100 || !!tu.ActComplete));
+      const dueRaw = tu.APlanComplete || t.PlanComplete;
+      const due = dueRaw ? new Date(String(dueRaw).slice(0, 10) + 'T00:00:00') : null;
+      const days = due ? Math.round((due - today) / 864e5) : null;
+      return { tuk: tu.TaskUserKey, taskKey: tu.TaskKey, status, done, user: (tu.UserName || '').trim(), userKey: tu.UserKey || 0,
+        initials: tu.Initials || '', service: tu.ServiceDescription || '', actual: +tu.ActualHours || 0, planned: +tu.Hours || 0,
+        pc: +tu.PercComp || 0, due, days, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0 };
+    });
+    const assigned = new Set(tus.map(tu => tu.TaskKey));
+    const unassigned = (raw.tasks || []).filter(t => !parents.has(t.TaskKey) && !assigned.has(t.TaskKey) && +t.PercComp < 100)
+      .map(t => ({ taskKey: t.TaskKey, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0,
+        due: t.PlanComplete ? new Date(String(t.PlanComplete).slice(0, 10) + 'T00:00:00') : null }));
+    return { statuses, cards, unassigned };
+  }
+
+  function renderBoard() {
+    if (!board.root || !board.data) return;
+    const m = boardModel();
+    // Toolbar: people chips (open work only), search, show completed, refresh.
+    const people = new Map();
+    m.cards.filter(c => !c.done).forEach(c => { const k = c.userKey; const p = people.get(k) || { key: k, name: c.user || 'Unassigned', initials: c.initials, n: 0 }; p.n++; people.set(k, p); });
+    const open = m.cards.filter(c => !c.done).length;
+    const chips = [`<button type="button" class="chip all ${board.user ? '' : 'on'}" data-user="0">Everyone <span class="n">${open}</span></button>`]
+      .concat([...people.values()].sort((a, b) => b.n - a.n).map(p =>
+        `<button type="button" class="chip ${board.user === p.key ? 'on' : ''}" data-user="${p.key}">${avatarHtml(p.key, p.name, p.initials)}${esc(p.name.split(' ')[0])} <span class="n">${p.n}</span></button>`));
+    const bar = board.root.querySelector('.bar');
+    const hadFocus = board.root.activeElement && board.root.activeElement.classList.contains('search');
+    bar.innerHTML = `<div class="chips">${chips.join('')}</div>
+      <label class="chk"><input type="checkbox" class="showc" ${board.showCompleted ? 'checked' : ''}> Show completed</label>
+      <input class="search" type="search" placeholder="Filter tasks…" value="${esc(board.search)}">
+      <button type="button" class="icon refresh" title="Reload from Workamajig">↻</button>`;
+    if (hadFocus) { const s = bar.querySelector('.search'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+    board.model = m;
+    renderColumns();
+  }
+
+  function renderColumns() {
+    const m = board.model; if (!m) return;
+    const q = board.search.trim().toLowerCase();
+    const match = c => (!board.user || c.userKey === board.user) &&
+      (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
+    const sortCards = (a, b) => ((a.days == null) - (b.days == null)) || ((a.days ?? 0) - (b.days ?? 0)) || (a.order - b.order);
+    const cols = [];
+    const noStatus = m.cards.filter(c => !c.status && !c.done && match(c));
+    if (noStatus.length) cols.push({ key: 0, name: 'No status', color: '#d6d6d6', cards: noStatus, drop: false });
+    m.statuses.forEach(st => {
+      const isDone = st.key === COMPLETED_KEY;
+      const cards = m.cards.filter(c => c.status === st.key && match(c) && (isDone || !c.done || board.showCompleted));
+      cols.push({ key: st.key, name: st.name, color: st.color, cards, drop: true, collapsed: isDone && !board.showCompleted, total: isDone ? m.cards.filter(c => c.status === st.key && match(c)).length : null });
+    });
+    if (!board.user) {
+      const un = m.unassigned.filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
+      if (un.length) cols.push({ key: -2, name: 'Not assigned', color: '#9b9b9b', cards: un, drop: false, unassigned: true });
+    }
+    const html = cols.map(col => {
+      const list = col.collapsed ? '' : (col.cards.slice().sort(sortCards).map(c => col.unassigned ? unassignedCard(c) : cardHtml(c, col)).join('') || '<div class="empty">Drop a card here</div>');
+      const hrs = col.unassigned ? '' : col.cards.reduce((s, c) => s + Math.max(0, c.planned - c.actual), 0);
+      const n = col.collapsed ? col.total : col.cards.length;
+      return `<section class="col ${col.collapsed ? 'collapsed' : ''}" style="--c:${col.color}" data-status="${col.key}" data-drop="${col.drop ? 1 : 0}" ${col.collapsed ? 'title="Show completed"' : ''}>
+        <div class="head"><span class="pill">${esc(col.name)}</span><span class="count">${n}</span>${hrs !== '' && !col.collapsed ? `<span class="hrs" title="Planned hours not yet logged">${fmtH(hrs)} left</span>` : ''}</div>
+        <div class="list">${list}</div></section>`;
+    }).join('');
+    board.root.querySelector('.cols').innerHTML = html || '<div class="msg">No assignments on this project.</div>';
+  }
+
+  const fmtH = h => (Math.round(h * 100) / 100) + 'h';
+  function avatarHtml(userKey, name, initials) {
+    const ini = esc(initials || (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2));
+    if (!userKey) return `<span class="av" style="background:#bbb">?</span>`;
+    return `<img class="av" alt="" src="${BASE}common/logo.aspx?logo=avatar&k=${userKey}&type=User" title="${esc(name)}" data-ini="${ini}">`;
+  }
+  function dueBadge(c) {
+    if (!c.due) return '';
+    const label = c.due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    if (c.done) return `<span class="b">Due ${label}</span>`;
+    if (c.days < 0) return `<span class="b over">Overdue ${-c.days}d</span>`;
+    if (c.days === 0) return `<span class="b today">Due today</span>`;
+    return `<span class="b">Due ${label}</span>`;
+  }
+  function cardHtml(c, col) {
+    const overHrs = c.planned > 0 && c.actual > c.planned;
+    return `<a class="card" draggable="true" data-tuk="${c.tuk}" data-task="${c.taskKey}" href="${urls.assignment(c.tuk)}" style="--c:${col.color}">
+      <div class="top"><span class="id">${esc(c.taskId)}</span><span class="grp">${esc(c.group)}</span></div>
+      <button type="button" class="more" title="More">⋯</button>
+      <div class="name">${esc(c.taskName)}</div>
+      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}</div>
+      ${c.pc ? `<div class="prog"><i style="width:${Math.min(100, c.pc)}%"></i></div>` : ''}
+      <div class="foot">${avatarHtml(c.userKey, c.user, c.initials)}<span class="who">${esc(c.user || 'Unassigned slot')}<small>${esc(c.service)}</small></span>
+      <span class="h ${overHrs ? 'over' : ''}" title="Logged / planned hours">${fmtH(c.actual)} / ${fmtH(c.planned)}</span></div></a>`;
+  }
+  function unassignedCard(t) {
+    const label = t.due ? t.due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+    return `<div class="card static" data-task="${t.taskKey}" style="--c:#9b9b9b" title="No one is assigned to this task">
+      <div class="top"><span class="id">${esc(t.taskId)}</span><span class="grp">${esc(t.group)}</span></div>
+      <button type="button" class="more" title="More">⋯</button>
+      <div class="name">${esc(t.taskName)}</div>
+      <div class="badges">${label ? `<span class="b">Due ${label}</span>` : ''}<span class="b">No assignee</span></div></div>`;
+  }
+
+  function onBoardClick(e) {
+    const t = e.target;
+    if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
+    if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
+    if (t.classList.contains('refresh')) { loadBoard(); return; }
+    const col = t.closest && t.closest('.col.collapsed');
+    if (col) { board.showCompleted = true; renderBoard(); return; }
+    if (t.classList.contains('more')) { e.preventDefault(); e.stopPropagation(); openCardMenu(t); return; }
+    if (t.closest && t.closest('.menu')) return;
+    closeCardMenu();
+    const card = t.closest && t.closest('.card');
+    if (card && card.classList.contains('static')) { e.preventDefault(); showInList(Number(card.dataset.task)); }
+  }
+
+  function openCardMenu(btnEl) {
+    closeCardMenu();
+    const card = btnEl.closest('.card');
+    const taskKey = Number(card.dataset.task), tuk = Number(card.dataset.tuk) || 0;
+    const pk = board.projectKey;
+    const m = document.createElement('div');
+    m.className = 'menu';
+    const items = [];
+    if (tuk) items.push(['Open assignment', () => location.assign(urls.assignment(tuk))]);
+    items.push(['Show in list', () => showInList(taskKey)]);
+    items.push(['Copy task link', () => copy(urls.task(pk, taskKey), 'task link')]);
+    if (tuk) items.push(['Copy assignment link', () => copy(urls.assignment(tuk), 'assignment link')]);
+    items.forEach(([label, fn]) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); closeCardMenu(); fn(); }); m.appendChild(b); });
+    board.root.querySelector('.wrap').appendChild(m);
+    const r = btnEl.getBoundingClientRect();
+    m.style.left = Math.min(r.left, innerWidth - 240) + 'px';
+    m.style.top = Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8) + 'px';
+    board.menu = m;
+  }
+  function closeCardMenu() { if (board.menu) { board.menu.remove(); board.menu = null; } }
+
+  function showInList(taskKey) {
+    setBoardPref(false);
+    closeBoard();
+    setTimeout(() => {
+      const row = findTaskRow(taskKey);
+      if (!row) { toast('Task is hidden in the list (completed tasks may be filtered)'); return; }
+      row.scrollIntoView({ block: 'center' });
+      setTimeout(() => spotlight(row), 300);
+    }, 400);
+  }
+
+  // ---- drag and drop ----
+  function onDragStart(e) {
+    const card = e.target.closest && e.target.closest('.card[data-tuk]');
+    if (!card) { e.preventDefault(); return; }
+    closeCardMenu();
+    board.drag = Number(card.dataset.tuk);
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(board.drag)); } catch (err) {}
+  }
+  function onDragOver(e) {
+    if (!board.drag) return;
+    const col = e.target.closest && e.target.closest('.col');
+    if (!col || col.dataset.drop !== '1') return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    board.root.querySelectorAll('.col.drop').forEach(x => { if (x !== col) x.classList.remove('drop'); });
+    col.classList.add('drop');
+  }
+  function onDrop(e) {
+    const col = e.target.closest && e.target.closest('.col');
+    const tuk = board.drag;
+    board.root.querySelectorAll('.col.drop').forEach(x => x.classList.remove('drop'));
+    board.drag = null;
+    if (!col || col.dataset.drop !== '1' || !tuk) return;
+    e.preventDefault();
+    moveAssignment(tuk, Number(col.dataset.status));
+  }
+
+  async function moveAssignment(tuk, statusKey) {
+    const tu = (board.data.projectTaskUserData || []).find(x => x.TaskUserKey === tuk);
+    const st = (board.data.taskUserStatus || []).find(x => x.k === statusKey);
+    if (!tu || !st || tu.TaskUserStatusKey === statusKey) return;
+    const prev = { TaskUserStatusKey: tu.TaskUserStatusKey, StatusName: tu.StatusName, PercComp: tu.PercComp };
+    Object.assign(tu, { TaskUserStatusKey: statusKey, StatusName: st.l });
+    renderBoard();
+    const el = board.root.querySelector(`.card[data-tuk="${tuk}"]`); if (el) el.classList.add('busy');
+    try {
+      const res = await call('WJAPP.Modules.Project.Traffic', 'updateAssignmentStatus', { TaskUserKey: tuk, TaskUserStatusKey: statusKey }, true);
+      if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+      if (res.data && res.data.PercComp != null) tu.PercComp = res.data.PercComp;
+      board.dirty = true;
+      renderBoard();
+      toast(`Moved to ${st.l}`);
+    } catch (err) {
+      Object.assign(tu, prev);
+      renderBoard();
+      toast('Could not change the status: ' + (err && err.message || err));
+    }
+  }
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -711,6 +1118,7 @@
       if (aid() === 'projects.diary.add') handlePendingPost();
     }
     assignmentPage();
+    boardTick();
   }
   function start() {
     document.addEventListener('mouseover', onOver, true);
