@@ -1495,7 +1495,8 @@
     const leaf = [...listFilter.leaf].filter(k => byKey.has(k));
     const hidden = hide ? leaf.filter(k => +byKey.get(k).PercComp >= 100).length : 0;
     const shown = leaf.length - hidden;
-    return `<span class="fchip" title="Only these tasks are shown in the list">${esc(listFilter.label)}: ${shown} task${shown === 1 ? '' : 's'}${hidden ? ` <span class="fh">(${hidden} completed hidden)</span>` : ''}<button type="button" class="fx" title="Show all tasks again">Clear</button></span>`;
+    const tip = `Only these tasks are shown in the list.${hidden ? ` ${hidden} more match but are completed, and Hide Completed Tasks is on.` : ''}`;
+    return `<span class="fchip" title="${esc(tip)}">${esc(listFilter.label)} · ${shown}${hidden ? ` <span class="fh">+${hidden} hidden</span>` : ''}<button type="button" class="fx" title="Show all tasks again">Clear</button></span>`;
   }
 
   function openListHygiene(mode) {
