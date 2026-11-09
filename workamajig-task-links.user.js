@@ -1018,8 +1018,8 @@
       .subj .open { font-weight: 400; }
       .msg { display: flex; gap: 10px; padding: 12px 14px 4px; }
       .msg + .msg { border-top: 1px solid #f2f2f2; }
-      .av { width: 30px; height: 30px; border-radius: 50%; flex: none; background: #e4e4e4 center/cover no-repeat; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #666; overflow: hidden; }
-      .av img { width: 100%; height: 100%; object-fit: cover; }
+      .av { width: 30px; height: 30px; border-radius: 50%; flex: none; background: #e4e4e4 center/cover no-repeat; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #666; overflow: hidden; position: relative; }
+      .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
       .mb { flex: 1; min-width: 0; }
       .who { font-size: 12px; color: #999; margin-bottom: 2px; }
       .who b { color: #333; font-weight: 600; margin-right: 6px; }
@@ -1070,7 +1070,7 @@
       const long = (p.Notes || '').replace(/<[^>]*>/g, '').length > 600;
       const open = st.open.has(key);
       return `<div class="msg"><div class="av">${initials(p.AddedByUserName || p.OriginatorUserName)}${p.AddedByKey ? `<img alt="" src="${BASE}common/logo.aspx?logo=avatar&k=${p.AddedByKey}&type=User">` : ''}</div>
-        <div class="mb"><div class="who"><b>${esc(p.AddedByUserName || p.OriginatorUserName || 'Someone')}</b>${esc(fmtWhen(p._utc))}${p.IsRead === 0 ? ' <span class="new">Unread</span>' : ''}</div>
+        <div class="mb"><div class="who"><b>${esc(p.AddedByUserName || p.OriginatorUserName || 'Someone')}</b>${esc(fmtWhen(p._utc))}${!p.IsRead ? ' <span class="new">Unread</span>' : ''}</div>
         <div class="txt ${long && !open ? 'clamp' : ''}">${html || '<span class="muted">(no text)</span>'}</div>
         ${long ? `<button type="button" class="link tog" data-k="${key}">${open ? 'Show less' : 'Show more'}</button>` : ''}
         ${p.AttachmentCount ? `<div class="att">${p.AttachmentCount} attachment${p.AttachmentCount > 1 ? 's' : ''} · open the thread to view</div>` : ''}</div></div>`;
