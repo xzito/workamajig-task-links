@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.23.0';
+  const VERSION = '0.24.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -34,6 +34,21 @@
     task: (pk, tk) => `${BASE}?aid=projects.schedule.edit2&k=${pk}#task=${tk}`,
     assignment: (tuk) => `${BASE}?aid=projects.production.assignment&k=${tuk}`
   };
+
+  // Open a screen the way Workamajig's own buttons do (Views.openPage), so it joins the app's page stack and the
+  // browser Back button closes it again. Workamajig keeps its own stack and overrides Back to "close the top page";
+  // a full page load (location.assign) bypasses that stack, and Back then lands on some other screen.
+  function openApp(aidName, k, io) {
+    try {
+      if (window.Views && typeof Views.openPage === 'function' && typeof window.Action === 'function') {
+        Views.openPage(io ? new Action(aidName, k, io) : new Action(aidName, k));
+        return;
+      }
+    } catch (e) { console.warn('[wjl] openPage failed, falling back to a page load', e); }
+    location.assign(`${BASE}?aid=${aidName}` + (k != null ? `&k=${encodeURIComponent(k)}` : '') + (io ? `&io=${encodeURIComponent(JSON.stringify(io))}` : ''));
+  }
+  // Plain left click on one of our links: open in-app. Cmd/Ctrl/Shift/middle click keep the browser's new-tab behavior.
+  const plainClick = e => !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0);
 
   // ---------- server calls (same endpoints the app uses; rt is the session request token) ----------
   async function call(cls, method, params, raw) {
@@ -510,8 +525,10 @@
       open.href = taskUrl;
       // Same-tab click: stash the task so the schedule spotlights it (the app strips the #task hash on load).
       open.addEventListener('click', e => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+        if (!plainClick(e)) return;
+        e.preventDefault();
         try { sessionStorage.setItem(SS_KEY, String(a.taskKey)); } catch (err) {}
+        openApp('projects.schedule.edit2', a.projectKey);
       });
       root.querySelector('.ctask').addEventListener('click', () => copy(taskUrl, 'task link'));
       root.querySelector('.casg').addEventListener('click', () => copy(urls.assignment(key), 'assignment link'));
@@ -642,7 +659,8 @@
         taskUrl: urls.task(a.projectKey, a.taskKey), assignmentUrl: urls.assignment(a.taskUserKey), pm, ts: Date.now() };
       try { sessionStorage.setItem(SS_POST, JSON.stringify(req)); } catch (e) {}
       // Same screen the native "new conversation" button opens, pre-linked to this task.
-      location.assign(`${BASE}?aid=projects.diary.add&k=${a.projectKey}&io=${encodeURIComponent(JSON.stringify({ taskKey: a.taskKey }))}`);
+      openApp('projects.diary.add', a.projectKey, { taskKey: a.taskKey });
+      ask.disabled = false; ask.textContent = 'Request details in a conversation';
     });
 
     if (a.canEditTasks) add.hidden = false;
@@ -1102,7 +1120,7 @@
         const showAll = st.more.has(t.rk) || t.items.length <= 4;
         const items = showAll ? t.items : [t.items[0]].concat(t.items.slice(-2));
         const hidden = t.items.length - items.length;
-        return `<div class="thread"><div class="subj"><span class="s">${esc(t.subject)}</span>${t.items.length > 1 ? `<span class="count">${t.items.length}</span>` : ''}<a class="link open" href="${BASE}?aid=projects.diary.thread&k=${t.rk}">Open thread</a></div>
+        return `<div class="thread"><div class="subj"><span class="s">${esc(t.subject)}</span>${t.items.length > 1 ? `<span class="count">${t.items.length}</span>` : ''}<a class="link open" data-rk="${t.rk}" href="${BASE}?aid=projects.diary.thread&k=${t.rk}">Open thread</a></div>
           ${msgHtml(items[0])}
           ${hidden ? `<div class="earlier"><button type="button" class="link moreb" data-rk="${t.rk}">Show ${hidden} earlier repl${hidden > 1 ? 'ies' : 'y'}</button></div>` : ''}
           ${items.slice(1).map(msgHtml).join('')}
@@ -1120,17 +1138,15 @@
       const t = e.target;
       if (t.classList.contains('tog')) { const k = Number(t.dataset.k); st.open.has(k) ? st.open.delete(k) : st.open.add(k); return render(); }
       if (t.classList.contains('moreb')) { st.more.add(Number(t.dataset.rk)); return render(); }
-      if (t.classList.contains('newpost')) {
-        location.assign(`${BASE}?aid=projects.diary.add&k=${a.projectKey}&io=${encodeURIComponent(JSON.stringify({ taskKey: a.taskKey }))}`);
-        return;
-      }
+      if (t.classList.contains('newpost')) { openApp('projects.diary.add', a.projectKey, { taskKey: a.taskKey }); return; }
+      if (t.classList.contains('open') && t.dataset.rk && plainClick(e)) { e.preventDefault(); openApp('projects.diary.thread', Number(t.dataset.rk)); return; }
       if (t.classList.contains('rbtn')) {
         const rk = Number(t.dataset.rk);
         const ta = root.querySelector(`textarea[data-root="${rk}"]`);
         const text = (ta && ta.value || '').trim();
         if (text) { try { sessionStorage.setItem(SS_REPLY, JSON.stringify({ parent: rk, text, ts: Date.now() })); } catch (err) {} }
         st.drafts[rk] = '';
-        location.assign(`${BASE}?aid=projects.diary.reply&k=${rk}`);
+        openApp('projects.diary.reply', rk);
       }
     });
     ['click', 'mousedown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
@@ -2002,7 +2018,7 @@
     if (t.closest('a[href]')) return; // links in the description
     const tu = ref.tuk ? (board.data.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
     const task = (board.data.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
-    if (t.classList.contains('mopen')) { location.assign(urls.assignment(ref.tuk)); return; }
+    if (t.classList.contains('mopen')) { closeModal(); openApp(ASSIGN_AID, ref.tuk); return; }
     if (t.classList.contains('mlist')) { closeModal(); showInList(ref.taskKey); return; }
     if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
@@ -2016,7 +2032,8 @@
       const req = { taskKey: ref.taskKey, projectKey: board.projectKey, taskName: task.TaskName || '', projectName: [task.ProjectName, task.CompanyName].filter(Boolean).join(' / '),
         taskUrl: urls.task(board.projectKey, ref.taskKey), assignmentUrl: ref.tuk ? urls.assignment(ref.tuk) : urls.task(board.projectKey, ref.taskKey), pm, ts: Date.now() };
       try { sessionStorage.setItem(SS_POST, JSON.stringify(req)); } catch (err) {}
-      location.assign(`${BASE}?aid=projects.diary.add&k=${board.projectKey}&io=${encodeURIComponent(JSON.stringify({ taskKey: ref.taskKey }))}`);
+      closeModal();
+      openApp('projects.diary.add', Number(board.projectKey), { taskKey: ref.taskKey });
       return;
     }
     if (t.classList.contains('msave')) {
@@ -2039,7 +2056,7 @@
     const m = document.createElement('div');
     m.className = 'menu';
     const items = [];
-    if (tuk) items.push(['Open assignment', () => location.assign(urls.assignment(tuk))]);
+    if (tuk) items.push(['Open assignment', () => openApp(ASSIGN_AID, tuk)]);
     items.push(['Show in list', () => showInList(taskKey)]);
     items.push(['Copy task link', () => copy(urls.task(pk, taskKey), 'task link')]);
     if (tuk) items.push(['Copy assignment link', () => copy(urls.assignment(tuk), 'assignment link')]);
