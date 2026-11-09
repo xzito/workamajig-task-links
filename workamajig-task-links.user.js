@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.15.0
+// @version      0.16.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.15.0';
+  const VERSION = '0.16.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -851,8 +851,8 @@
       .nd { margin-left: 8px; font: inherit; font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid #e0a82e; background: #fff4d6; color: #6b4b00; cursor: pointer; line-height: 1; white-space: nowrap; }
       .nd:hover { background: #ffecb8; }
       [hidden] { display: none !important; }
-    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div><button type="button" class="nd" hidden title="Open tasks with no description — show them on the board"></button>`;
-    r.querySelector('.nd').addEventListener('click', () => { board.noDesc = true; setBoardPref(true); if (board.on) renderBoard(); else openBoard(); });
+    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div><button type="button" class="nd" hidden></button>`;
+    r.querySelector('.nd').addEventListener('click', () => { board.hygOpen = true; setBoardPref(true); if (board.on) renderBoard(); else openBoard(); });
     r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
     r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); openBoard(); });
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
@@ -867,9 +867,11 @@
     const pill = board.toggle.shadowRoot.querySelector('.nd');
     let raw = board.data;
     if (!raw) { try { raw = (await getSchedule(qs().get('k'))).raw; } catch (e) { return; } }
-    const n = missingDescTasks(raw).length;
+    // Same counting as the board's Hygiene menu.
+    const saved = board.data; board.data = raw; const n = hygieneCounts(boardModel()).total; board.data = saved;
     pill.hidden = !n;
-    pill.textContent = n === 1 ? '1 missing description' : n + ' missing descriptions';
+    pill.textContent = n === 1 ? '1 hygiene issue' : n + ' hygiene issues';
+    pill.title = 'Open work with problems (no description, overdue, over budget, no hours planned, not assigned). Click to review on the board.';
   }
   function syncToggle() {
     if (!board.toggle) return;
@@ -946,8 +948,20 @@
       .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer; user-select: none; }
       .fsum { flex-basis: 100%; font-size: 12px; color: #6b4b00; background: #fff8e5; border: 1px solid #f0d9a0; border-radius: 6px; padding: 5px 10px; }
       .fsum .mlink { border: 0; background: none; padding: 0; margin-left: 8px; color: #1a8fbf; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
-      .icon.nodesc .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
-      .icon.nodesc.on { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
+      .hwrap { position: relative; display: inline-block; }
+      .icon.hyg .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
+      .icon.hyg.on { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
+      .hmenu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 6; width: 300px; background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 8px 0; }
+      .htitle { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #999; padding: 2px 14px 6px; }
+      .hrow { display: flex; align-items: center; gap: 10px; padding: 7px 14px; cursor: pointer; font-size: 13px; color: #333; }
+      .hrow:hover { background: #f6f6f6; }
+      .hl { flex: 1; min-width: 0; }
+      .hl small { display: block; font-size: 11px; color: #999; }
+      .hc { font-size: 12px; font-weight: 600; color: #8a5a00; background: #fff4d6; border-radius: 999px; padding: 1px 8px; }
+      .hfoot { display: flex; gap: 14px; padding: 8px 14px 2px; border-top: 1px solid #eee; margin-top: 4px; }
+      .hfoot .mlink { border: 0; background: none; padding: 0; color: #1a8fbf; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
+      .b.ob { background: #fde4e4; color: #b3261e; }
+      .b.nh { background: #eef1f5; color: #4a5568; }
       .b.nd { background: #fff4d6; color: #8a5a00; }
       .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
       .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
@@ -1045,7 +1059,7 @@
       img.replaceWith(sp);
     }, true);
     root.addEventListener('input', e => { if (e.target.classList.contains('search')) { board.search = e.target.value; renderBoard(); } });
-    root.addEventListener('change', e => { if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); } });
+    root.addEventListener('change', e => { if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
     root.addEventListener('mousedown', onCardMouseDown);
@@ -1069,6 +1083,24 @@
   }
 
   const hasDesc = t => !!String(t && t.Description || '').replace(/<[^>]*>/g, '').trim();
+  // Project hygiene checks. Each applies to open work only: assignment cards that aren't done, plus open tasks with nobody assigned.
+  const HYGIENE = [
+    { key: 'nodesc', label: 'No description', hint: 'Task has no description', card: c => c.noDesc, task: t => t.noDesc },
+    { key: 'overdue', label: 'Overdue', hint: 'Past its due date and not completed', card: c => c.days != null && c.days < 0, task: t => t.days != null && t.days < 0 },
+    { key: 'overbudget', label: 'Over budget', hint: 'More hours logged than planned', card: c => c.planned > 0 && c.actual > c.planned, task: () => false },
+    { key: 'nohours', label: 'No hours planned', hint: 'Assignment has 0 planned hours', card: c => !(c.planned > 0), task: () => false },
+    { key: 'unassigned', label: 'Not assigned', hint: 'Task with nobody on it, or an empty assignment slot', card: c => c.userKey < 0, task: () => true }
+  ];
+  board.hyg = new Set();
+  const issuesOf = (item, isTask) => HYGIENE.filter(h => (isTask ? h.task(item) : h.card(item))).map(h => h.key);
+  const hygPass = (item, isTask) => !board.hyg.size || issuesOf(item, isTask).some(k => board.hyg.has(k));
+  // Counts over the whole project's open work: per issue, and items with at least one issue.
+  function hygieneCounts(m) {
+    const items = m.cards.filter(c => !c.done).map(c => issuesOf(c, false)).concat(m.unassigned.map(t => issuesOf(t, true)));
+    const per = {}; HYGIENE.forEach(h => { per[h.key] = items.filter(i => i.includes(h.key)).length; });
+    return { per, total: items.filter(i => i.length).length };
+  }
+
   // Open leaf tasks with no description (summary rows and finished tasks don't count).
   function missingDescTasks(raw) {
     const parents = new Set((raw.tasks || []).map(t => t.SummaryTaskKey).filter(Boolean));
@@ -1097,6 +1129,7 @@
     const assigned = new Set(tus.map(tu => tu.TaskKey));
     const unassigned = (raw.tasks || []).filter(t => !parents.has(t.TaskKey) && !assigned.has(t.TaskKey) && +t.PercComp < 100)
       .map(t => ({ taskKey: t.TaskKey, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0, noDesc: !hasDesc(t),
+        days: t.PlanComplete ? Math.round((new Date(String(t.PlanComplete).slice(0, 10) + 'T00:00:00') - today) / 864e5) : null,
         due: t.PlanComplete ? new Date(String(t.PlanComplete).slice(0, 10) + 'T00:00:00') : null }));
     return { statuses, cards, unassigned };
   }
@@ -1107,7 +1140,7 @@
     // Toolbar: people chips (open work only), search, show completed, refresh.
     // Chip counts = open assignments that pass the other active filters (description, search), so numbers match the board.
     const q = board.search.trim().toLowerCase();
-    const passes = c => !c.done && (!board.noDesc || c.noDesc) &&
+    const passes = c => !c.done && hygPass(c, false) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const people = new Map();
     m.cards.filter(c => !c.done).forEach(c => { const k = c.userKey; const p = people.get(k) || { key: k, name: c.user || 'Unassigned', initials: c.initials, n: 0 }; if (passes(c)) p.n++; people.set(k, p); });
@@ -1121,13 +1154,16 @@
       <label class="chk"><input type="checkbox" class="showc" ${showDone() ? 'checked' : ''}> Show completed</label>
       <button type="button" class="icon collapse-all" title="Collapse every column">Collapse all</button>
       <button type="button" class="icon expand-all" title="Expand every column">Expand all</button>
-      <button type="button" class="icon nodesc ${board.noDesc ? 'on' : ''}" title="Show only open tasks that have no description">No description <span class="n">${missingDescTasks(board.data).length}</span></button>
+      ${(() => { const hc = hygieneCounts(m); board.hygCounts = hc; return `<span class="hwrap"><button type="button" class="icon hyg ${board.hyg.size ? 'on' : ''}" title="Project hygiene: find open work with problems">Hygiene <span class="n">${hc.total}</span> ▾</button>${board.hygOpen ? `<div class="hmenu">
+        <div class="htitle">Show open work that has…</div>
+        ${HYGIENE.map(h => `<label class="hrow"><input type="checkbox" class="hchk" data-k="${h.key}" ${board.hyg.has(h.key) ? 'checked' : ''}><span class="hl">${h.label}<small>${h.hint}</small></span><span class="hc">${hc.per[h.key]}</span></label>`).join('')}
+        <div class="hfoot"><button type="button" class="mlink hall">Any issue</button><button type="button" class="mlink hnone">Clear</button></div></div>` : ''}</span>`; })()}
       <input class="search" type="search" placeholder="Filter tasks…" value="${esc(board.search)}">
       <button type="button" class="icon refresh" title="Reload from Workamajig">↻</button>
       ${(() => {
         const parts = [];
         if (board.user) { const p = people.get(board.user); parts.push(esc(p ? p.name : 'one person')); }
-        if (board.noDesc) parts.push('no description');
+        if (board.hyg.size) parts.push(HYGIENE.filter(h => board.hyg.has(h.key)).map(h => h.label.toLowerCase()).join(' or '));
         if (q) parts.push('matching “' + esc(board.search.trim()) + '”');
         return parts.length ? `<div class="fsum">Filtered: showing ${parts.join(' · ')} <button type="button" class="mlink fclear">Clear filters</button></div>` : '';
       })()}`;
@@ -1140,7 +1176,7 @@
   function renderColumns() {
     const m = board.model; if (!m) return;
     const q = board.search.trim().toLowerCase();
-    const match = c => (!board.user || c.userKey === board.user) && (!board.noDesc || (c.noDesc && !c.done)) &&
+    const match = c => (!board.user || c.userKey === board.user) && (!board.hyg.size || (!c.done && hygPass(c, false))) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const sortCards = (a, b) => ((a.days == null) - (b.days == null)) || ((a.days ?? 0) - (b.days ?? 0)) || (a.order - b.order);
     const cols = [];
@@ -1152,7 +1188,7 @@
       cols.push({ key: st.key, name: st.name, color: st.color, cards, drop: true });
     });
     if (!board.user) {
-      const un = m.unassigned.filter(t => (!board.noDesc || t.noDesc)) .filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
+      const un = m.unassigned.filter(t => hygPass(t, true)).filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
       if (un.length) cols.push({ key: -2, name: 'Not assigned', color: '#9b9b9b', cards: un, drop: false, unassigned: true });
     }
     cols.forEach(col => { col.collapsed = isCollapsed(col.name); });
@@ -1188,7 +1224,7 @@
       <div class="top"><span class="id">${esc(c.taskId)}</span><span class="grp">${esc(c.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(c.taskName)}</div>
-      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}${c.noDesc && !c.done ? '<span class="b nd">No description</span>' : ''}</div>
+      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}${c.noDesc && !c.done ? '<span class="b nd">No description</span>' : ''}${!c.done && board.hyg.has('overbudget') && c.planned > 0 && c.actual > c.planned ? '<span class="b ob">Over budget</span>' : ''}${!c.done && board.hyg.has('nohours') && !(c.planned > 0) ? '<span class="b nh">No hours planned</span>' : ''}</div>
       ${c.pc ? `<div class="prog"><i style="width:${Math.min(100, c.pc)}%"></i></div>` : ''}
       <div class="foot">${avatarHtml(c.userKey, c.user, c.initials)}<span class="who">${esc(c.user || 'Unassigned slot')}<small>${esc(c.service)}</small></span>
       <span class="h ${overHrs ? 'over' : ''}" title="Logged / planned hours">${fmtH(c.actual)} / ${fmtH(c.planned)}</span></div></a>`;
@@ -1209,9 +1245,12 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
-    if (t.classList.contains('fclear')) { board.user = 0; board.noDesc = false; board.search = ''; renderBoard(); return; }
-    const nd = t.closest && t.closest('.nodesc');
-    if (nd) { board.noDesc = !board.noDesc; renderBoard(); return; }
+    if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.search = ''; board.hygOpen = false; renderBoard(); return; }
+    if (t.closest && t.closest('.hyg')) { board.hygOpen = !board.hygOpen; renderBoard(); return; }
+    if (t.classList.contains('hall')) { HYGIENE.forEach(h => board.hyg.add(h.key)); renderBoard(); return; }
+    if (t.classList.contains('hnone')) { board.hyg.clear(); renderBoard(); return; }
+    if (t.closest && t.closest('.hmenu')) return; // checkbox changes handled in the change listener
+    if (board.hygOpen) { board.hygOpen = false; renderBoard(); }
     if (t.classList.contains('collapse-all') || t.classList.contains('expand-all')) {
       const v = t.classList.contains('collapse-all');
       (board.colNames || []).forEach(n => { board.collapsed[n] = v; });
