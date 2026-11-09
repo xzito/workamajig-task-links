@@ -271,6 +271,7 @@
   }
 
   function spotlight(row) {
+    if (document.querySelector('.wjl-spot')) return;
     const mk = css => { const d = document.createElement('div'); d.className = 'wjl-spot'; d.style.cssText = 'position:fixed;z-index:99990;pointer-events:none;transition:opacity .4s;opacity:0;' + css; document.body.appendChild(d); return d; };
     const dim = 'background:rgba(0,0,0,.38);';
     const [pTop, pBottom, pLeft, pRight, ring] = [
@@ -307,14 +308,16 @@
   }
 
 
+  let pendingTimer = null;
   function handlePendingTask() {
     let tk = null; try { tk = sessionStorage.getItem(SS_KEY); } catch (e) {}
-    if (!tk || aid() !== 'projects.schedule.edit2') return;
+    // One poller at a time: the app rewrites the URL while loading, which would otherwise start a second one.
+    if (!tk || aid() !== 'projects.schedule.edit2' || pendingTimer) return;
     let tries = 0;
-    const t = setInterval(() => {
+    const t = pendingTimer = setInterval(() => {
       const row = findTaskRow(tk);
       if (row) {
-        clearInterval(t); try { sessionStorage.removeItem(SS_KEY); } catch (e) {}
+        clearInterval(t); pendingTimer = null; try { sessionStorage.removeItem(SS_KEY); } catch (e) {}
         row.scrollIntoView({ block: 'center' });
         setTimeout(() => spotlight(row), 400);
         // The app can still shift or reset scroll while it finishes loading; re-center if the row drifted out of view.
@@ -324,7 +327,7 @@
           const r = el.getBoundingClientRect();
           if (r.top < 80 || r.bottom > innerHeight - 40) el.scrollIntoView({ block: 'center' });
         }, ms));
-      } else if (++tries > 60) { clearInterval(t); try { sessionStorage.removeItem(SS_KEY); } catch (e) {} }
+      } else if (++tries > 60) { clearInterval(t); pendingTimer = null; try { sessionStorage.removeItem(SS_KEY); } catch (e) {} }
     }, 250);
   }
 
