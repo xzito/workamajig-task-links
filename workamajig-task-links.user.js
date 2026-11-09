@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.20.0';
+  const VERSION = '0.21.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1205,7 +1205,35 @@
     if (!board.on && boardPref() && board.noAuto !== pk && document.querySelector('page.open #grdProjectSchedule grid-row[data-key]')) openBoard();
   }
 
+  // List / Board switch: top right of the page header, next to Workamajig's "saved" indicator.
+  function ensureBoardSeg() {
+    if (board.seg && board.seg.isConnected) return;
+    const pg = schedulePage();
+    const spacer = pg && pg.querySelector(':scope > header > div.spacer');
+    const fallback = pg && pg.querySelector('button[data-action="toggleGantt"]');
+    if (!spacer && !fallback) return;
+    const host = document.createElement('span');
+    host.id = 'wjl-board-seg';
+    host.style.cssText = 'display:inline-flex;align-self:center;vertical-align:middle;margin-right:12px;flex:none';
+    const r = host.attachShadow({ mode: 'open' });
+    r.innerHTML = `<style>
+      :host { all: initial; font-family: inherit; color-scheme: light; }
+      * { box-sizing: border-box; font-family: inherit; }
+      .seg { display: inline-flex; border: 1px solid #cfcfcf; border-radius: 8px; overflow: hidden; background: #fff; }
+      button { font: inherit; font-size: 12px; padding: 7px 14px; border: 0; background: #fff; color: #444; cursor: pointer; line-height: 1; }
+      button + button { border-left: 1px solid #cfcfcf; }
+      button.on { background: #333; color: #fff; font-weight: 600; }
+    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div>`;
+    r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
+    r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); closeListHygiene(); openBoard(); });
+    ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
+    if (spacer) spacer.insertAdjacentElement('afterend', host); else fallback.parentElement.insertBefore(host, fallback);
+    board.seg = host;
+    syncToggle();
+  }
+
   function ensureBoardToggle() {
+    ensureBoardSeg();
     if (board.toggle && board.toggle.isConnected) return;
     const anchor = document.querySelector('page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"]');
     if (!anchor) return;
@@ -1244,9 +1272,7 @@
       .onboard { display: block; border: 0; background: none; padding: 4px 14px 2px 34px; color: #1a8fbf; font-size: 12px; text-decoration: underline; cursor: pointer; }
       .hfoot { padding: 8px 14px 2px; font-size: 11px; color: #999; }
       .msg { padding: 10px 14px; color: #888; font-size: 12px; }
-    </style><div class="wrap"><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div><div class="hmenu" hidden></div>`;
-    r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
-    r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); closeListHygiene(); openBoard(); });
+    </style><div class="wrap"><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div><div class="hmenu" hidden></div>`;
     r.querySelector('.hyg').addEventListener('click', () => (listHyg.open ? closeListHygiene() : openListHygiene()));
     r.querySelector('.hmenu').addEventListener('click', onListHygieneClick);
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
@@ -1352,16 +1378,19 @@
   }
 
   function syncToggle() {
+    if (board.seg) {
+      const s = board.seg.shadowRoot;
+      s.querySelector('.list').classList.toggle('on', !board.on);
+      s.querySelector('.board').classList.toggle('on', board.on);
+    }
     if (!board.toggle) return;
     const r = board.toggle.shadowRoot;
-    r.querySelector('.list').classList.toggle('on', !board.on);
-    r.querySelector('.board').classList.toggle('on', board.on);
     // The board has its own Hygiene menu with real filtering.
     r.querySelector('.hyg').hidden = board.on;
     if (board.on) closeListHygiene();
   }
 
-  // Gantt, Templates and Task Detail only apply to the list, so hide them while the board is up.
+  // Gantt, Templates, Task Detail and the column-set picker (e.g. "PM Advance View") only apply to the list, so hide them while the board is up.
   function setListOnlyButtons(hidden) {
     let st = document.getElementById('wjl-board-hide');
     if (!st) {
@@ -1370,7 +1399,7 @@
       document.head.appendChild(st);
     }
     st.textContent = hidden
-      ? 'page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleTemplates"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleSide"]{display:none!important}'
+      ? 'page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleTemplates"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleSide"],page.open[data-aid="projects.schedule.edit2"] div.input-control.lookup:has(> input[data-source="colSets"]){display:none!important}'
       : '';
   }
 
