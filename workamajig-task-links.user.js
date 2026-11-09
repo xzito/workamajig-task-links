@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.16.0
+// @version      0.16.1
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.16.0';
+  const VERSION = '0.16.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -848,31 +848,16 @@
       button { font: inherit; font-size: 12px; padding: 7px 12px; border: 0; background: #fff; color: #444; cursor: pointer; line-height: 1; }
       button + button { border-left: 1px solid #cfcfcf; }
       button.on { background: #333; color: #fff; font-weight: 600; }
-      .nd { margin-left: 8px; font: inherit; font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid #e0a82e; background: #fff4d6; color: #6b4b00; cursor: pointer; line-height: 1; white-space: nowrap; }
-      .nd:hover { background: #ffecb8; }
       [hidden] { display: none !important; }
-    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div><button type="button" class="nd" hidden></button>`;
-    r.querySelector('.nd').addEventListener('click', () => { board.hygOpen = true; setBoardPref(true); if (board.on) renderBoard(); else openBoard(); });
+    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div>`;
     r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
     r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); openBoard(); });
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
     anchor.parentElement.insertBefore(host, anchor);
     board.toggle = host;
     syncToggle();
-    updateToggleCount();
   }
-  // "N missing descriptions" pill beside the switch; refreshed whenever schedule data loads.
-  async function updateToggleCount() {
-    if (!board.toggle) return;
-    const pill = board.toggle.shadowRoot.querySelector('.nd');
-    let raw = board.data;
-    if (!raw) { try { raw = (await getSchedule(qs().get('k'))).raw; } catch (e) { return; } }
-    // Same counting as the board's Hygiene menu.
-    const saved = board.data; board.data = raw; const n = hygieneCounts(boardModel()).total; board.data = saved;
-    pill.hidden = !n;
-    pill.textContent = n === 1 ? '1 hygiene issue' : n + ' hygiene issues';
-    pill.title = 'Open work with problems (no description, overdue, over budget, no hours planned, not assigned). Click to review on the board.';
-  }
+
   function syncToggle() {
     if (!board.toggle) return;
     const r = board.toggle.shadowRoot;
@@ -1076,8 +1061,7 @@
       if (seq !== board.seq || pk !== board.projectKey) return;
       board.data = s.raw;
       renderBoard();
-      updateToggleCount();
-    } catch (e) {
+      } catch (e) {
       board.root.querySelector('.cols').innerHTML = `<div class="msg err">Could not load the schedule: ${esc(e && e.message || e)}</div>`;
     }
   }
@@ -1364,7 +1348,7 @@
         await saveTaskDescription(board.projectKey, ref.taskKey, text, st.base || '');
         task.Description = text; st.editing = false; st.msg = ''; toast('Description saved');
       } catch (err) { st.msg = 'Could not save: ' + (err && err.message || err); st.draft = text; }
-      renderBoard(); updateToggleCount();
+      renderBoard();
     }
   }
 
