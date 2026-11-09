@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.14.0
+// @version      0.14.1
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.14.0';
+  const VERSION = '0.14.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -881,7 +881,7 @@
   function buildBoardHost() {
     const host = document.createElement('div');
     host.id = 'wjl-board';
-    host.style.cssText = 'position:fixed;z-index:30;display:none';
+    host.style.cssText = 'position:fixed;z-index:10;display:none'; // under the app header (20) and sidebar fly-outs (30)
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `<style>
       :host { all: initial; font-family: inherit; color-scheme: light; }
@@ -897,6 +897,8 @@
       .search { margin-left: auto; width: 200px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font: inherit; font-size: 12px; color: #333; background: #fff; }
       .search:focus { outline: none; border-color: #7ab51d; }
       .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer; user-select: none; }
+      .fsum { flex-basis: 100%; font-size: 12px; color: #6b4b00; background: #fff8e5; border: 1px solid #f0d9a0; border-radius: 6px; padding: 5px 10px; }
+      .fsum .mlink { border: 0; background: none; padding: 0; margin-left: 8px; color: #1a8fbf; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
       .icon.nodesc .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
       .icon.nodesc.on { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
       .b.nd { background: #fff4d6; color: #8a5a00; }
@@ -995,7 +997,7 @@
       const sp = document.createElement('span'); sp.className = 'av'; sp.style.background = '#8a9bab'; sp.textContent = img.dataset.ini || '?';
       img.replaceWith(sp);
     }, true);
-    root.addEventListener('input', e => { if (e.target.classList.contains('search')) { board.search = e.target.value; renderColumns(); } });
+    root.addEventListener('input', e => { if (e.target.classList.contains('search')) { board.search = e.target.value; renderBoard(); } });
     root.addEventListener('change', e => { if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
@@ -1056,9 +1058,13 @@
     if (!board.root || !board.data) return;
     const m = boardModel();
     // Toolbar: people chips (open work only), search, show completed, refresh.
+    // Chip counts = open assignments that pass the other active filters (description, search), so numbers match the board.
+    const q = board.search.trim().toLowerCase();
+    const passes = c => !c.done && (!board.noDesc || c.noDesc) &&
+      (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const people = new Map();
-    m.cards.filter(c => !c.done).forEach(c => { const k = c.userKey; const p = people.get(k) || { key: k, name: c.user || 'Unassigned', initials: c.initials, n: 0 }; p.n++; people.set(k, p); });
-    const open = m.cards.filter(c => !c.done).length;
+    m.cards.filter(c => !c.done).forEach(c => { const k = c.userKey; const p = people.get(k) || { key: k, name: c.user || 'Unassigned', initials: c.initials, n: 0 }; if (passes(c)) p.n++; people.set(k, p); });
+    const open = m.cards.filter(passes).length;
     const chips = [`<button type="button" class="chip all ${board.user ? '' : 'on'}" data-user="0">Everyone <span class="n">${open}</span></button>`]
       .concat([...people.values()].sort((a, b) => b.n - a.n).map(p =>
         `<button type="button" class="chip ${board.user === p.key ? 'on' : ''}" data-user="${p.key}">${avatarHtml(p.key, p.name, p.initials)}${esc(p.name.split(' ')[0])} <span class="n">${p.n}</span></button>`));
@@ -1070,7 +1076,14 @@
       <button type="button" class="icon expand-all" title="Expand every column">Expand all</button>
       <button type="button" class="icon nodesc ${board.noDesc ? 'on' : ''}" title="Show only open tasks that have no description">No description <span class="n">${missingDescTasks(board.data).length}</span></button>
       <input class="search" type="search" placeholder="Filter tasks…" value="${esc(board.search)}">
-      <button type="button" class="icon refresh" title="Reload from Workamajig">↻</button>`;
+      <button type="button" class="icon refresh" title="Reload from Workamajig">↻</button>
+      ${(() => {
+        const parts = [];
+        if (board.user) { const p = people.get(board.user); parts.push(esc(p ? p.name : 'one person')); }
+        if (board.noDesc) parts.push('no description');
+        if (q) parts.push('matching “' + esc(board.search.trim()) + '”');
+        return parts.length ? `<div class="fsum">Filtered: showing ${parts.join(' · ')} <button type="button" class="mlink fclear">Clear filters</button></div>` : '';
+      })()}`;
     if (hadFocus) { const s = bar.querySelector('.search'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
     board.model = m;
     renderColumns();
@@ -1149,6 +1162,7 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
+    if (t.classList.contains('fclear')) { board.user = 0; board.noDesc = false; board.search = ''; renderBoard(); return; }
     const nd = t.closest && t.closest('.nodesc');
     if (nd) { board.noDesc = !board.noDesc; renderBoard(); return; }
     if (t.classList.contains('collapse-all') || t.classList.contains('expand-all')) {
@@ -1176,8 +1190,8 @@
 
   // ---- card details modal ----
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && board.modal && board.on) { e.stopPropagation(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); } }, true);
-  function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; renderModal(); }
-  function closeModal() { board.modal = null; const bg = board.root.querySelector('.mbg'); if (bg) bg.remove(); }
+  function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; board.host.style.zIndex = '40'; renderModal(); }
+  function closeModal() { board.modal = null; if (board.host) board.host.style.zIndex = '10'; const bg = board.root && board.root.querySelector('.mbg'); if (bg) bg.remove(); }
   const linkify = txt => esc(txt).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
   const fmtDate = d => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
@@ -1406,7 +1420,7 @@
       const d = document.createElement('div');
       d.className = 'wjl-pdim';
       d.title = 'Close';
-      d.style.cssText = 'position:fixed;z-index:25;background:rgba(20,20,20,.45);opacity:0;transition:opacity .2s;cursor:pointer';
+      d.style.cssText = 'position:fixed;z-index:35;background:rgba(20,20,20,.45);opacity:0;transition:opacity .2s;cursor:pointer';
       d.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
       d.addEventListener('click', e => {
         e.preventDefault(); e.stopPropagation();
