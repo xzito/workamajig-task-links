@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.10.1
+// @version      0.11.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.10.1';
+  const VERSION = '0.11.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -788,6 +788,7 @@
     clearInterval(board.timer);
     if (board.host) board.host.style.display = 'none';
     closeCardMenu();
+    closeModal();
     syncToggle();
     if (leaving) { board.projectKey = null; board.data = null; }
     // The list underneath still shows statuses from before; let the app reload them.
@@ -873,10 +874,50 @@
       .menu { position: fixed; z-index: 5; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.15); padding: 4px 0; min-width: 220px; }
       .menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 14px; font: inherit; font-size: 13px; color: #333; cursor: pointer; }
       .menu button:hover { background: #f4f4f4; }
+      .mbg { position: fixed; inset: 0; z-index: 20; background: rgba(20,20,20,.45); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; overflow-y: auto; }
+      .modal { width: min(720px, 100%); background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.3); border-top: 6px solid var(--c); display: flex; flex-direction: column; max-height: 88vh; }
+      .mhead { position: relative; padding: 18px 56px 12px 22px; border-bottom: 1px solid #eee; }
+      .mtop { display: flex; gap: 8px; font-size: 12px; color: #888; }
+      .mtitle { margin: 4px 0 10px; font-size: 20px; font-weight: 600; color: #222; line-height: 1.3; }
+      .mx { position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; font-size: 22px; color: #777; cursor: pointer; line-height: 1; }
+      .mx:hover { background: #f1f1f1; color: #222; }
+      .mstat { display: flex; gap: 8px; align-items: center; }
+      .mstatus { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px; border: 0; background: var(--c); color: #111; cursor: pointer; }
+      .mbody { padding: 16px 22px; overflow-y: auto; }
+      .mbody label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #999; margin: 14px 0 5px; }
+      .mbody label:first-child { margin-top: 0; }
+      .mgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 4px 20px; }
+      .mgrid label { margin-top: 0; }
+      .mgrid > div { padding: 6px 0; font-size: 13px; color: #333; }
+      .mgrid .over { color: #b3261e; }
+      .mdesc { white-space: pre-wrap; font-size: 13px; line-height: 1.55; color: #333; background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; max-height: 40vh; overflow-y: auto; }
+      .mdesc a { color: #1a8fbf; word-break: break-all; }
+      .mnodesc { font-size: 13px; color: #8a6d1a; background: #fffaf0; border: 1px solid #ecd9a6; border-radius: 8px; padding: 10px 12px; }
+      .mlink { border: 0; background: none; padding: 0; color: #1a8fbf; font: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; }
+      .mta { display: block; width: 100%; min-height: 140px; padding: 10px 12px; border: 1px solid #cfcfcf; border-radius: 8px; font: inherit; font-size: 13px; line-height: 1.5; color: #222; background: #fff; resize: vertical; }
+      .mta:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
+      .mrow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+      .mhint { margin-left: auto; font-size: 11px; color: #999; }
+      .mmsg { color: #b3261e; font-size: 12px; margin-top: 8px; }
+      .mp { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+      .mp small { display: block; font-size: 11px; color: #999; }
+      .mpeople { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+      .mfoot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 22px; border-top: 1px solid #eee; background: #fafafa; border-radius: 0 0 12px 12px; }
+      .mbtn { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; border: 1px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; }
+      .mbtn:hover { background: #f3f3f3; }
+      .mbtn.primary { background: #7ab51d; border-color: #7ab51d; color: #fff; font-weight: 600; }
+      .mbtn.primary:hover { background: #6a9f18; }
+      .mbtn:disabled { opacity: .6; cursor: default; }
+      .spacer { flex: 1; }
       .msg { padding: 30px; color: #888; text-align: center; }
       .msg.err { color: #b3261e; }
     </style><div class="wrap"><div class="bar"></div><div class="cols"><div class="msg">Loading board…</div></div></div>`;
     ['keydown', 'keyup', 'keypress'].forEach(t => root.addEventListener(t, e => e.stopPropagation()));
+    root.addEventListener('keydown', e => {
+      if (!board.modal) return;
+      if (e.key === 'Escape') { e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); }
+      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && board.modal.editing) { e.preventDefault(); const b = root.querySelector('.msave'); if (b) b.click(); }
+    });
     root.addEventListener('click', onBoardClick);
     // Avatar images that fail to load fall back to initials.
     root.addEventListener('error', e => {
@@ -955,6 +996,7 @@
     if (hadFocus) { const s = bar.querySelector('.search'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
     board.model = m;
     renderColumns();
+    if (board.modal) renderModal();
   }
 
   function renderColumns() {
@@ -1025,6 +1067,7 @@
   function onBoardClick(e) {
     const t = e.target;
     if (board.justDragged) { e.preventDefault(); e.stopPropagation(); board.justDragged = false; return; }
+    if (t.closest && t.closest('.mbg')) { onModalClick(e); return; }
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
@@ -1045,7 +1088,101 @@
     if (t.closest && t.closest('.menu')) return;
     closeCardMenu();
     const card = t.closest && t.closest('.card');
-    if (card && card.classList.contains('static')) { e.preventDefault(); showInList(Number(card.dataset.task)); }
+    if (!card) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return; // let the link open in a new tab
+    e.preventDefault();
+    openModal({ tuk: Number(card.dataset.tuk) || 0, taskKey: Number(card.dataset.task) });
+  }
+
+  // ---- card details modal ----
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && board.modal && board.on) { e.stopPropagation(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); } }, true);
+  function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; renderModal(); }
+  function closeModal() { board.modal = null; const bg = board.root.querySelector('.mbg'); if (bg) bg.remove(); }
+  const linkify = txt => esc(txt).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+  const fmtDate = d => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+  function renderModal() {
+    const st = board.modal; if (!st || !board.data) return;
+    const old = board.root.querySelector('.mbg');
+    if (old) { const ta = old.querySelector('textarea'); if (ta) st.draft = ta.value; }
+    const raw = board.data, ref = st.ref;
+    const t = (raw.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
+    const tu = ref.tuk ? (raw.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
+    const others = (raw.projectTaskUserData || []).filter(x => x.TaskKey === ref.taskKey && x.TaskUserKey !== ref.tuk);
+    const statuses = raw.taskUserStatus || [];
+    const color = tu ? (STATUS_COLORS[tu.StatusName] || '#d6d6d6') : '#9b9b9b';
+    const desc = (t.Description || '').replace(/<[^>]*>/g, '').trim();
+    const canEdit = !!(window.System && System.rights && System.rights.prjedittasks);
+    const planned = tu ? +tu.Hours || 0 : 0, actual = tu ? +tu.ActualHours || 0 : 0;
+    const statusSel = tu ? `<select class="mstatus" style="--c:${color}">${tu.TaskUserStatusKey > 0 ? '' : '<option value="0" selected>No status</option>'}${statuses.map(x => `<option value="${x.k}" ${x.k === tu.TaskUserStatusKey ? 'selected' : ''}>${esc(x.l)}</option>`).join('')}</select>` : '<span class="b">Not assigned</span>';
+    const descHtml = st.editing
+      ? `<textarea class="mta" placeholder="Goal, scope, inputs and links, and what done looks like…">${esc(st.draft)}</textarea>
+         <div class="mrow"><button type="button" class="mbtn primary msave">Save description</button><button type="button" class="mbtn mcancel">Cancel</button><span class="mhint">⌘/Ctrl + Enter to save</span></div>`
+      : desc ? `<div class="mdesc">${linkify(desc)}</div>`
+      : `<div class="mnodesc">No description yet.${canEdit ? ' <button type="button" class="mlink madd">Add one</button>' : ''} <button type="button" class="mlink mask">Request details in a conversation</button></div>`;
+    const people = others.map(o => `<div class="mp">${avatarHtml(o.UserKey || -1, o.UserName, o.Initials)}<span>${esc((o.UserName || 'Unassigned slot').trim())}<small>${esc(o.StatusName || 'No status')}</small></span></div>`).join('');
+    const html = `<div class="mbg"><div class="modal" role="dialog" aria-modal="true" style="--c:${color}">
+      <div class="mhead"><div class="mtop"><span class="id">${esc(t.TaskID || '')}</span><span class="grp">${esc(t.SummaryTaskName || '')}</span></div>
+        <button type="button" class="mx" title="Close (Esc)">×</button>
+        <h2 class="mtitle">${esc(t.TaskName || '(task)')}</h2>
+        <div class="mstat">${statusSel}${tu && +tu.PercComp ? `<span class="b">${+tu.PercComp}% complete</span>` : ''}</div></div>
+      <div class="mbody">
+        <div class="mgrid">
+          ${tu ? `<div><label>Assignee</label><div class="mp">${avatarHtml(tu.UserKey || -1, tu.UserName, tu.Initials)}<span>${esc((tu.UserName || 'Unassigned slot').trim())}<small>${esc(tu.ServiceDescription || '')}</small></span></div></div>` : ''}
+          <div><label>Due</label><div>${fmtDate((tu && tu.APlanComplete) || t.PlanComplete)}</div></div>
+          <div><label>Planned</label><div>${fmtDate(t.PlanStart)} → ${fmtDate(t.PlanComplete)}</div></div>
+          ${tu ? `<div><label>Hours</label><div class="${planned && actual > planned ? 'over' : ''}">${fmtH(actual)} logged of ${fmtH(planned)} planned</div></div>` : ''}
+        </div>
+        <label>Task description</label>${descHtml}
+        ${st.msg ? `<div class="mmsg">${esc(st.msg)}</div>` : ''}
+        ${people ? `<label>Also on this task</label><div class="mpeople">${people}</div>` : ''}
+      </div>
+      <div class="mfoot">
+        ${tu ? `<button type="button" class="mbtn primary mopen">Open full assignment</button>` : ''}
+        <button type="button" class="mbtn mlist">Show in list</button>
+        <span class="spacer"></span>
+        <button type="button" class="mbtn mcopyt">Copy task link</button>
+        ${tu ? `<button type="button" class="mbtn mcopya">Copy assignment link</button>` : ''}
+      </div></div></div>`;
+    if (old) old.outerHTML = html; else board.root.querySelector('.wrap').insertAdjacentHTML('beforeend', html);
+    const ta = board.root.querySelector('.mta');
+    if (ta && st.editing) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    const sel = board.root.querySelector('.mstatus');
+    if (sel) sel.addEventListener('change', () => moveAssignment(ref.tuk, Number(sel.value)));
+  }
+
+  async function onModalClick(e) {
+    const t = e.target, st = board.modal; if (!st) return;
+    const ref = st.ref;
+    if (t.classList.contains('mbg') || t.classList.contains('mx')) { closeModal(); return; }
+    if (t.closest('a[href]')) return; // links in the description
+    const tu = ref.tuk ? (board.data.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
+    const task = (board.data.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
+    if (t.classList.contains('mopen')) { location.assign(urls.assignment(ref.tuk)); return; }
+    if (t.classList.contains('mlist')) { closeModal(); showInList(ref.taskKey); return; }
+    if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
+    if (t.classList.contains('mcopya')) { copy(urls.assignment(ref.tuk), 'assignment link'); return; }
+    if (t.classList.contains('madd')) { st.editing = true; st.draft = ''; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('mcancel')) { st.editing = false; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('mask')) {
+      t.disabled = true; t.textContent = 'Opening a new post…';
+      let pm = null; try { pm = await resolveProjectManager(board.projectKey); } catch (err) {}
+      const req = { taskKey: ref.taskKey, projectKey: board.projectKey, taskName: task.TaskName || '', projectName: [task.ProjectName, task.CompanyName].filter(Boolean).join(' / '),
+        taskUrl: urls.task(board.projectKey, ref.taskKey), assignmentUrl: ref.tuk ? urls.assignment(ref.tuk) : urls.task(board.projectKey, ref.taskKey), pm, ts: Date.now() };
+      try { sessionStorage.setItem(SS_POST, JSON.stringify(req)); } catch (err) {}
+      location.assign(`${BASE}?aid=projects.diary.add&k=${board.projectKey}&io=${encodeURIComponent(JSON.stringify({ taskKey: ref.taskKey }))}`);
+      return;
+    }
+    if (t.classList.contains('msave')) {
+      const ta = board.root.querySelector('.mta'); const text = (ta && ta.value || '').trim();
+      if (!text) { st.msg = 'Type a description first.'; st.draft = ''; renderModal(); return; }
+      t.disabled = true; t.textContent = 'Saving…';
+      try {
+        await saveTaskDescription(board.projectKey, ref.taskKey, text);
+        task.Description = text; st.editing = false; st.msg = ''; toast('Description saved');
+      } catch (err) { st.msg = 'Could not save: ' + (err && err.message || err); st.draft = text; }
+      renderModal();
+    }
   }
 
   function openCardMenu(btnEl) {
