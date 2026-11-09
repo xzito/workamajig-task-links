@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.10.0
+// @version      0.10.1
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.10.0';
+  const VERSION = '0.10.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -712,6 +712,12 @@
   const FALLBACK_COLORS = ['#7aa7d9', '#e0a82e', '#d07ad9', '#5cc2c2', '#9b9b9b'];
   const board = { on: false, host: null, root: null, toggle: null, projectKey: null, data: null, user: 0, search: '',
     showCompleted: false, timer: null, dirty: false, drag: null, seq: 0 };
+  const COLLAPSE_PREF = 'wjl.boardCollapsed';
+  board.collapsed = (() => { try { return JSON.parse(localStorage.getItem(COLLAPSE_PREF) || '{}') || {}; } catch (e) { return {}; } })();
+  const saveCollapsed = () => { try { localStorage.setItem(COLLAPSE_PREF, JSON.stringify(board.collapsed)); } catch (e) {} };
+  // Completed starts collapsed; every other column starts open. Choices are remembered by column name.
+  const isCollapsed = name => (name in board.collapsed ? !!board.collapsed[name] : name === 'Completed');
+  const showDone = () => !isCollapsed('Completed');
   const boardPref = () => { try { return localStorage.getItem(BOARD_PREF) === '1'; } catch (e) { return false; } };
   const setBoardPref = v => { try { localStorage.setItem(BOARD_PREF, v ? '1' : '0'); } catch (e) {} };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -765,8 +771,6 @@
     const pk = qs().get('k');
     if (board.projectKey !== pk) {
       board.user = 0; board.search = '';
-      const hc = pg.querySelector('input[name="hideCompleted"]');
-      board.showCompleted = hc ? !hc.checked : false;
     }
     board.on = true; board.projectKey = pk;
     syncToggle();
@@ -828,11 +832,14 @@
       .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer; user-select: none; }
       .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
       .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
-      .col { flex: 0 0 280px; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
-      .col.collapsed { flex-basis: 52px; cursor: pointer; }
+      .col { flex: 0 0 280px; width: 280px; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
+      .col.collapsed { flex-basis: 52px; width: 52px; cursor: pointer; }
       .col.drop { border-color: var(--c); }
       .head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px; border-bottom: 2px solid var(--c); }
-      .pill { background: var(--c); color: #111; font-weight: 600; font-size: 12px; padding: 4px 12px; border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tog { flex: none; border: 0; background: transparent; color: #666; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 5px; }
+      .tog:hover { background: rgba(0,0,0,.07); color: #222; }
+      .col.collapsed .tog { order: -1; }
+      .pill { min-width: 0; background: var(--c); color: #111; font-weight: 600; font-size: 12px; padding: 4px 12px; border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .count { font-size: 11px; color: #666; background: rgba(0,0,0,.06); border-radius: 999px; padding: 1px 7px; }
       .hrs { margin-left: auto; font-size: 11px; color: #777; white-space: nowrap; }
       .col.collapsed .head { flex-direction: column; border-bottom: 0; height: 100%; padding: 10px 6px; }
@@ -840,7 +847,7 @@
       .col.collapsed .hrs, .col.collapsed .list { display: none; }
       .list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
       .empty { color: #aaa; font-size: 12px; text-align: center; padding: 18px 6px; border: 1px dashed #d6d6d6; border-radius: 8px; }
-      .card { display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #e3e3e3; border-left: 4px solid var(--c); border-radius: 8px; padding: 10px 10px 8px; box-shadow: 0 1px 2px rgba(0,0,0,.05); cursor: grab; position: relative; }
+      .card { min-width: 0; overflow: hidden; display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #e3e3e3; border-left: 4px solid var(--c); border-radius: 8px; padding: 10px 10px 8px; box-shadow: 0 1px 2px rgba(0,0,0,.05); cursor: grab; position: relative; }
       .card:hover { box-shadow: 0 3px 10px rgba(0,0,0,.10); }
       .card.dragging { opacity: .45; }
       .card.busy { opacity: .6; pointer-events: none; }
@@ -857,9 +864,9 @@
       .prog i { display: block; height: 100%; background: #3bb3d6; }
       .foot { display: flex; align-items: center; gap: 8px; }
       .av { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: #ddd; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: #fff; }
-      .who { min-width: 0; font-size: 12px; color: #444; line-height: 1.2; }
+      .who { flex: 1; min-width: 0; overflow: hidden; font-size: 12px; color: #444; line-height: 1.2; }
       .who small { display: block; color: #999; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .h { margin-left: auto; font-size: 11px; color: #666; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .h { flex: none; margin-left: auto; font-size: 11px; color: #666; white-space: nowrap; font-variant-numeric: tabular-nums; }
       .h.over { color: #b3261e; }
       .more { position: absolute; top: 6px; right: 6px; border: 0; background: transparent; color: #999; cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 5px; }
       .more:hover { background: #f0f0f0; color: #333; }
@@ -879,7 +886,7 @@
       img.replaceWith(sp);
     }, true);
     root.addEventListener('input', e => { if (e.target.classList.contains('search')) { board.search = e.target.value; renderColumns(); } });
-    root.addEventListener('change', e => { if (e.target.classList.contains('showc')) { board.showCompleted = e.target.checked; renderBoard(); } });
+    root.addEventListener('change', e => { if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
     root.addEventListener('mousedown', onCardMouseDown);
@@ -940,7 +947,9 @@
     const bar = board.root.querySelector('.bar');
     const hadFocus = board.root.activeElement && board.root.activeElement.classList.contains('search');
     bar.innerHTML = `<div class="chips">${chips.join('')}</div>
-      <label class="chk"><input type="checkbox" class="showc" ${board.showCompleted ? 'checked' : ''}> Show completed</label>
+      <label class="chk"><input type="checkbox" class="showc" ${showDone() ? 'checked' : ''}> Show completed</label>
+      <button type="button" class="icon collapse-all" title="Collapse every column">Collapse all</button>
+      <button type="button" class="icon expand-all" title="Expand every column">Expand all</button>
       <input class="search" type="search" placeholder="Filter tasks…" value="${esc(board.search)}">
       <button type="button" class="icon refresh" title="Reload from Workamajig">↻</button>`;
     if (hadFocus) { const s = bar.querySelector('.search'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
@@ -955,23 +964,25 @@
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const sortCards = (a, b) => ((a.days == null) - (b.days == null)) || ((a.days ?? 0) - (b.days ?? 0)) || (a.order - b.order);
     const cols = [];
-    const noStatus = m.cards.filter(c => !c.status && !c.done && match(c));
+    const noStatus = m.cards.filter(c => !c.status && (!c.done || showDone()) && match(c));
     if (noStatus.length) cols.push({ key: 0, name: 'No status', color: '#d6d6d6', cards: noStatus, drop: false });
     m.statuses.forEach(st => {
       const isDone = st.key === COMPLETED_KEY;
-      const cards = m.cards.filter(c => c.status === st.key && match(c) && (isDone || !c.done || board.showCompleted));
-      cols.push({ key: st.key, name: st.name, color: st.color, cards, drop: true, collapsed: isDone && !board.showCompleted, total: isDone ? m.cards.filter(c => c.status === st.key && match(c)).length : null });
+      const cards = m.cards.filter(c => c.status === st.key && match(c) && (isDone || !c.done || showDone()));
+      cols.push({ key: st.key, name: st.name, color: st.color, cards, drop: true });
     });
     if (!board.user) {
       const un = m.unassigned.filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
       if (un.length) cols.push({ key: -2, name: 'Not assigned', color: '#9b9b9b', cards: un, drop: false, unassigned: true });
     }
+    cols.forEach(col => { col.collapsed = isCollapsed(col.name); });
+    board.colNames = cols.map(c => c.name);
     const html = cols.map(col => {
       const list = col.collapsed ? '' : (col.cards.slice().sort(sortCards).map(c => col.unassigned ? unassignedCard(c) : cardHtml(c, col)).join('') || '<div class="empty">Drop a card here</div>');
       const hrs = col.unassigned ? '' : col.cards.reduce((s, c) => s + Math.max(0, c.planned - c.actual), 0);
-      const n = col.collapsed ? col.total : col.cards.length;
-      return `<section class="col ${col.collapsed ? 'collapsed' : ''}" style="--c:${col.color}" data-status="${col.key}" data-drop="${col.drop ? 1 : 0}" ${col.collapsed ? 'title="Show completed"' : ''}>
-        <div class="head"><span class="pill">${esc(col.name)}</span><span class="count">${n}</span>${hrs !== '' && !col.collapsed ? `<span class="hrs" title="Planned hours not yet logged">${fmtH(hrs)} left</span>` : ''}</div>
+      const n = col.cards.length;
+      return `<section class="col ${col.collapsed ? 'collapsed' : ''}" style="--c:${col.color}" data-status="${col.key}" data-name="${esc(col.name)}" data-drop="${col.drop ? 1 : 0}" ${col.collapsed ? `title="Expand ${esc(col.name)}"` : ''}>
+        <div class="head"><button type="button" class="tog" title="${col.collapsed ? 'Expand' : 'Collapse'} column">${col.collapsed ? '›' : '‹'}</button><span class="pill">${esc(col.name)}</span><span class="count">${n}</span>${hrs !== '' && !col.collapsed ? `<span class="hrs" title="Planned hours not yet logged">${fmtH(hrs)} left</span>` : ''}</div>
         <div class="list">${list}</div></section>`;
     }).join('');
     board.root.querySelector('.cols').innerHTML = html || '<div class="msg">No assignments on this project.</div>';
@@ -1017,8 +1028,19 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
-    const col = t.closest && t.closest('.col.collapsed');
-    if (col) { board.showCompleted = true; renderBoard(); return; }
+    if (t.classList.contains('collapse-all') || t.classList.contains('expand-all')) {
+      const v = t.classList.contains('collapse-all');
+      (board.colNames || []).forEach(n => { board.collapsed[n] = v; });
+      saveCollapsed(); renderBoard(); return;
+    }
+    const tog = t.closest && t.closest('.tog');
+    const ccol = t.closest && t.closest('.col.collapsed');
+    if (tog || ccol) {
+      const col = (tog || ccol).closest('.col');
+      const name = col.dataset.name;
+      board.collapsed[name] = !isCollapsed(name);
+      saveCollapsed(); renderBoard(); return;
+    }
     if (t.classList.contains('more')) { e.preventDefault(); e.stopPropagation(); openCardMenu(t); return; }
     if (t.closest && t.closest('.menu')) return;
     closeCardMenu();
