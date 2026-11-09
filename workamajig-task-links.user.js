@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.25.0';
+  const VERSION = '0.25.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1261,7 +1261,7 @@
     if (!anchor) return;
     const host = document.createElement('span');
     host.id = 'wjl-board-toggle';
-    host.style.cssText = 'display:inline-flex;vertical-align:middle;margin-right:10px';
+    host.style.cssText = 'display:inline-flex;vertical-align:middle;margin:0 10px 0 12px';
     const r = host.attachShadow({ mode: 'open' });
     r.innerHTML = `<style>
       :host { all: initial; font-family: inherit; color-scheme: light; }
@@ -1271,7 +1271,7 @@
       button + button { border-left: 1px solid #cfcfcf; }
       button.on { background: #333; color: #fff; font-weight: 600; }
       [hidden] { display: none !important; }
-      .wrap { display: inline-flex; align-items: center; gap: 8px; }
+      .wrap { display: inline-flex; align-items: center; gap: 10px; }
       .hyg { border: 1px solid #cfcfcf; border-radius: 8px; white-space: nowrap; }
       .hyg .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
       .conv { border: 1px solid #cfcfcf; border-radius: 8px; white-space: nowrap; }
