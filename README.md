@@ -57,6 +57,8 @@ On an assignment page (`projects.production.assignment`) the script also:
   How the inline save works: it is the same server call the Schedule page's Save button makes (`updateScheduleDM`), sent with a fresh copy of the task row from `getSchedule` in which only `Description` is changed, plus the project row from `initSchedule`. Verified side by side with a native save: both write the description and bump `DateUpdated` on the project's tasks, and nothing else changes. The script refuses to save when the schedule is locked or when a description appeared in the meantime, and it never overwrites an existing description.
 
 ## How it works
+
+- **In-app navigation** (v0.24): every button or link the script adds that opens another screen (Open full assignment, Open assignment, Open in schedule, Open thread, New conversation, Reply, Request details) opens it the way Workamajig's own buttons do (`Views.openPage`). Workamajig keeps its own stack of open screens and makes the browser Back button close the top one; full page loads skipped that stack, so Back used to land on an unrelated screen. Cmd/Ctrl/Shift-click still opens a new tab.
 - Grids are `<grid-row data-key>`; cards are `<li data-target="<screen id>" data-key>`. The script never edits that DOM; the button and menu are fixed-position overlays.
 - Server calls reuse the app's own `data.aspx?<Class>.<method>` endpoints with the session request token (`System.user.rt`):
   - `Modules.Projects.Schedule.getSchedule {projectKey}` → `tasks[]` (TaskKey, TaskID, TaskName) and `projectTaskUserData[]` (TaskKey → TaskUserKey, UserKey, UserName). Cached per project.
