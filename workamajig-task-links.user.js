@@ -822,7 +822,7 @@
     if (!raw) { try { raw = (await getSchedule(qs().get('k'))).raw; } catch (e) { return; } }
     const n = missingDescTasks(raw).length;
     pill.hidden = !n;
-    pill.textContent = n === 1 ? '1 task missing a description' : n + ' tasks missing descriptions';
+    pill.textContent = n === 1 ? '1 missing description' : n + ' missing descriptions';
   }
   function syncToggle() {
     if (!board.toggle) return;
@@ -1080,7 +1080,7 @@
   function renderColumns() {
     const m = board.model; if (!m) return;
     const q = board.search.trim().toLowerCase();
-    const match = c => (!board.user || c.userKey === board.user) && (!board.noDesc || c.noDesc) &&
+    const match = c => (!board.user || c.userKey === board.user) && (!board.noDesc || (c.noDesc && !c.done)) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const sortCards = (a, b) => ((a.days == null) - (b.days == null)) || ((a.days ?? 0) - (b.days ?? 0)) || (a.order - b.order);
     const cols = [];
