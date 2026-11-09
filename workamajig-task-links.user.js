@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.19.0';
+  const VERSION = '0.20.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -446,10 +446,12 @@
     }
     if (on && !wideStyle.isConnected) document.head.appendChild(wideStyle);
     if (!on && wideStyle.isConnected) wideStyle.remove();
-    if (!on) return;
+    asgLayoutStyle(on && asgLayoutOn());
+    if (!on) { asg.tabFixed = false; return; }
 
     const key = qs().get('k');
     assignmentLinks(key);
+    if (key && asgLayoutOn()) getAssignment(key).then(a => { if (a.taskKey && aid() === ASSIGN_AID && qs().get('k') === key) asgLayout(a); }).catch(() => {});
     const due = document.querySelector('page.open div.pad-b-l > h2');
     if (!key || !due || due.parentElement.querySelector('#wjl-hours')) return;
     const box = document.createElement('table');
@@ -496,6 +498,7 @@
       <select class="status" title="Assignment status (same as dragging on the Today or project board)" hidden></select>
       <a class="open" title="Open this task in the project schedule, spotlighted"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>Open in schedule</a>
       <button type="button" class="ctask" title="Copy a link that opens the schedule and spotlights this task"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 013.6 3.6L10.6 8M9 11.5l-1.2 1.2a2.6 2.6 0 01-3.6-3.6L5.4 8"/></svg>Copy task link</button>
+      <button type="button" class="lay" title="Switch between the new layout (conversation and to-dos inline) and Workamajig's classic tabs"></button>
       <button type="button" class="casg" title="Copy the link to this assignment page"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 013.6 3.6L10.6 8M9 11.5l-1.2 1.2a2.6 2.6 0 01-3.6-3.6L5.4 8"/></svg>Copy assignment link</button>
     </div>`;
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
@@ -512,6 +515,9 @@
       });
       root.querySelector('.ctask').addEventListener('click', () => copy(taskUrl, 'task link'));
       root.querySelector('.casg').addEventListener('click', () => copy(urls.assignment(key), 'assignment link'));
+      const lay = root.querySelector('.lay');
+      lay.textContent = asgLayoutOn() ? 'Classic layout' : 'New layout';
+      lay.addEventListener('click', () => { setAsgLayout(!asgLayoutOn()); location.reload(); });
       root.querySelector('.row').hidden = false;
       setupStatusSelect(root.querySelector('.status'), a, key);
     }).catch(() => host.remove());
@@ -795,6 +801,355 @@
       model.diary.setValue('ContactUserKeys', String(req.pm.UserKey));
       model.diary.setValue('ContactUserNames', req.pm.UserName);
     }
+  }
+
+  // ---------- Assignment page layout: description + conversation in the main column, to-dos in a right rail ----------
+  // Workamajig's own side column moves to the right (CSS order only) and loses the donut charts; the To Do List and
+  // Conversations tabs are hidden because both now show inline. Everything we add is a Shadow DOM host.
+  // "Classic layout" in the action row turns it off (remembered per browser).
+  const ASG_LAYOUT_PREF = 'wjl.asgLayout';
+  const SS_REPLY = 'wjl.pendingReply';
+  const asgLayoutOn = () => { try { return localStorage.getItem(ASG_LAYOUT_PREF) !== 'classic'; } catch (e) { return true; } };
+  const setAsgLayout = on => { try { localStorage.setItem(ASG_LAYOUT_PREF, on ? 'new' : 'classic'); } catch (e) {} };
+  const ASG = 'page.open[data-aid="projects.production.assignment"]';
+  const asg = { reload: false };
+  let asgStyle;
+  function asgLayoutStyle(on) {
+    if (!asgStyle) {
+      asgStyle = document.createElement('style');
+      asgStyle.id = 'wjl-asg2';
+      asgStyle.textContent =
+        `${ASG} > section > sidesection{order:2 !important;width:330px !important;flex:none !important;border-left:1px solid #ececec;background:#fafafa}` +
+        `${ASG} > section > sidesection div.pad-b-l > div.muted.x1-2,${ASG} > section > sidesection div.pad-b-l > div:has(canvas){display:none !important}` +
+        `${ASG} button[data-action="clickTab"][data-key="todo"],${ASG} button[data-action="clickTab"][data-key="conv"]{display:none !important}`;
+    }
+    if (on && !asgStyle.isConnected) document.head.appendChild(asgStyle);
+    if (!on && asgStyle.isConnected) asgStyle.remove();
+  }
+
+  function asgLayout(a) {
+    const pg = document.querySelector(ASG);
+    if (!pg) return;
+    // Inline to-dos and conversations replace those tabs, so keep the page on Description of Work.
+    const dp = pg.view && pg.view.module && pg.view.module.model && pg.view.module.model.dp;
+    if (dp && (dp.section === 'todo' || dp.section === 'conv') && !asg.tabFixed) {
+      const tab = pg.querySelector('button[data-action="clickTab"][data-key="desc"]');
+      if (tab) { tab.click(); asg.tabFixed = true; }
+    }
+    // The app can reuse this page for another assignment; drop hosts that belong to a different task.
+    pg.querySelectorAll('#wjl-asgtodo, #wjl-asgconv').forEach(h => { if (h.dataset.tk !== String(a.taskKey)) h.remove(); });
+    const side = pg.querySelector(':scope > section > sidesection div.pad-b-l');
+    if (side && !side.parentElement.querySelector('#wjl-asgtodo')) side.insertAdjacentElement('afterend', asgTodoHost(a));
+    const sec = pg.querySelector('[data-bind-visible="dp@section == \'desc\'"]');
+    let conv = sec && sec.querySelector('#wjl-asgconv');
+    if (sec && !conv) {
+      conv = asgConvHost(a);
+      const pd = sec.querySelector(':scope > div.pad-t-l');
+      pd ? pd.insertAdjacentElement('beforebegin', conv) : sec.appendChild(conv);
+    } else if (conv && asg.reload) {
+      // Back from a reply or new post: show it.
+      conv.wjlLoad && conv.wjlLoad();
+      const td = pg.querySelector('#wjl-asgtodo'); td && td.wjlLoad && td.wjlLoad();
+    }
+    asg.reload = false;
+  }
+
+  const SHADOW_BASE = `:host { all: initial; display: block; font-family: inherit; color: #333; color-scheme: light; }
+      * { box-sizing: border-box; font-family: inherit; }
+      [hidden] { display: none !important; }
+      button { font: inherit; cursor: pointer; }
+      .cap { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #8a8a8a; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+      .count { font-size: 11px; font-weight: 600; color: #666; background: #ececec; border-radius: 999px; padding: 1px 7px; letter-spacing: 0; }
+      .muted { color: #999; font-size: 12px; }
+      .err { color: #c0392b; font-size: 12px; margin-top: 6px; }
+      .link { border: 0; background: none; padding: 0; color: #1a8fbf; font-size: 12px; text-decoration: underline; }
+      .btn { font-size: 12px; line-height: 1; padding: 8px 12px; border: 1px solid #cfcfcf; border-radius: 6px; background: #fff; color: #333; white-space: nowrap; }
+      .btn:hover:not(:disabled) { background: #f4f4f4; }
+      .btn:disabled { opacity: .6; cursor: default; }
+      input[type=text], textarea { font: inherit; font-size: 13px; color: #222; background: #fff; border: 1px solid #cfcfcf; border-radius: 6px; padding: 7px 9px; caret-color: #222; }
+      input[type=text]:focus, textarea:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.15); }`;
+
+  // Keep the app's keyboard shortcuts out of our fields.
+  const guardKeys = host => ['keydown', 'keyup', 'keypress'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
+
+  // ----- right rail: to-dos (same calls as the board modal and the Schedule page) -----
+  function asgTodoHost(a) {
+    const host = document.createElement('div');
+    host.id = 'wjl-asgtodo';
+    host.dataset.tk = String(a.taskKey);
+    host.style.cssText = 'display:block;margin:0 0 18px;padding:0 20px 0 0';
+    const root = host.attachShadow({ mode: 'open' });
+    const st = { todos: null, showDone: false, msg: '', busy: false };
+    const R = () => (window.System && System.rights) || {};
+    const enabled = () => !!(window.System && System.prefs && System.prefs.UseToDo) && R().prjViewToDos !== false;
+    root.innerHTML = `<style>${SHADOW_BASE}
+      .td { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; font-size: 13px; line-height: 1.35; border-bottom: 1px solid #efefef; }
+      .td input { margin: 2px 0 0; flex: none; width: 15px; height: 15px; accent-color: #7ab51d; cursor: pointer; }
+      .td .s { flex: 1; min-width: 0; word-break: break-word; }
+      .td small { display: block; color: #999; font-size: 11px; margin-top: 2px; }
+      .td.done .s { color: #999; text-decoration: line-through; }
+      .td .del { visibility: hidden; border: 0; background: none; color: #aaa; font-size: 16px; line-height: 1; padding: 0 2px; }
+      .td:hover .del { visibility: visible; }
+      .td .del:hover { color: #c0392b; }
+      .add { display: flex; gap: 6px; margin-top: 10px; }
+      .add input { flex: 1; min-width: 0; }
+      .more { margin-top: 6px; }
+    </style><div class="cap">To-dos <span class="count">…</span></div><div class="body"><div class="muted">Loading…</div></div>`;
+    const load = async () => {
+      if (!enabled()) { host.hidden = true; return; }
+      try {
+        const res = await call('Modules.Projects.Schedule', 'loadScheduleToDos', { projectKey: Number(a.projectKey), copyToDoList: null }, true);
+        if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+        st.todos = ((res.data && res.data.todos) || []).filter(x => x.TaskKey === a.taskKey);
+        st.msg = '';
+      } catch (e) { st.todos = st.todos || []; st.msg = 'Could not load to-dos: ' + (e && e.message || e); }
+      render();
+    };
+    host.wjlLoad = load;
+    const render = () => {
+      const canAdd = R().prjEditToDos !== false, canDel = !!R().prjDeleteToDos;
+      const all = (st.todos || []).slice().sort((x, y) => (x.Completed - y.Completed) || ((x.DisplayOrder || 0) - (y.DisplayOrder || 0)));
+      const open = all.filter(x => !x.Completed), done = all.filter(x => x.Completed);
+      root.querySelector('.count').textContent = open.length;
+      const meta = x => [x.UserFullName && x.UserFullName !== 'Not Assigned' ? esc(x.UserFullName) : '', x.ActivityDate ? 'Due ' + esc(fmtDate(x.ActivityDate)) : '', x.StatusName ? esc(x.StatusName) : ''].filter(Boolean).join(' · ');
+      const row = x => `<div class="td ${x.Completed ? 'done' : ''}"><input type="checkbox" data-k="${x.ActivityKey}" ${x.Completed ? 'checked' : ''} ${canAdd ? '' : 'disabled'} title="${x.Completed ? 'Mark open' : 'Mark complete'}"><span class="s">${esc(x.Subject || '(no subject)')}${meta(x) ? `<small>${meta(x)}</small>` : ''}</span>${canDel ? `<button type="button" class="del" data-k="${x.ActivityKey}" title="Delete to-do">×</button>` : ''}</div>`;
+      const draft = root.querySelector('.new'); const val = draft ? draft.value : ''; const hadFocus = root.activeElement === draft;
+      root.querySelector('.body').innerHTML =
+        (open.map(row).join('') || `<div class="muted">${all.length ? 'All done.' : 'No to-dos on this task yet.'}</div>`) +
+        (done.length ? `<div class="more"><button type="button" class="link tog">${st.showDone ? 'Hide' : 'Show'} ${done.length} completed</button></div>${st.showDone ? done.map(row).join('') : ''}` : '') +
+        (canAdd ? `<div class="add"><input type="text" class="new" placeholder="Add a to-do and press Enter"><button type="button" class="btn plus">Add</button></div>` : '') +
+        (st.msg ? `<div class="err">${esc(st.msg)}</div>` : '');
+      const n = root.querySelector('.new');
+      if (n) { n.value = val; if (hadFocus || st.refocus) { n.focus(); st.refocus = false; } }
+    };
+    const add = async () => {
+      const n = root.querySelector('.new'); const subject = (n && n.value || '').trim();
+      if (!subject || st.busy) return;
+      st.busy = true; n.disabled = true;
+      const pk = Number(a.projectKey);
+      try {
+        const res = await call('Modules.Projects.Schedule', 'updateToDo', { projectKey: pk, todos: [{ ActivityKey: -1, ProjectKey: pk, TaskKey: a.taskKey, Subject: subject, Completed: 0, StatusName: '', rowstate: 'I' }] }, true);
+        if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+        const map = ((res.data && res.data.keyMap) || []).find(x => x.OldKey === -1);
+        st.todos.push({ ActivityKey: map ? map.NewKey : Date.now(), TaskKey: a.taskKey, Subject: subject, Completed: 0, StatusName: '', DisplayOrder: 999 });
+        n.value = ''; st.msg = ''; st.refocus = true;
+      } catch (e) { st.msg = 'Could not add: ' + (e && e.message || e); }
+      st.busy = false; n.disabled = false;
+      render();
+    };
+    root.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.classList.contains('new')) { e.preventDefault(); add(); } });
+    root.addEventListener('click', async e => {
+      const t = e.target;
+      if (t.classList.contains('plus')) return add();
+      if (t.classList.contains('tog')) { st.showDone = !st.showDone; return render(); }
+      if (t.classList.contains('del')) {
+        const k = Number(t.dataset.k), td = st.todos.find(x => x.ActivityKey === k); if (!td) return;
+        if (!confirm(`Delete the to-do "${td.Subject}"? This can't be undone.`)) return;
+        try {
+          const res = await call('Modules.Projects.Production', 'deleteToDo', { ActivityKey: k, ProjectKey: Number(a.projectKey), TaskKey: td.TaskKey }, true);
+          if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+          st.todos = st.todos.filter(x => x.ActivityKey !== k); st.msg = '';
+        } catch (err) { st.msg = 'Could not delete: ' + (err && err.message || err); }
+        render();
+      }
+    });
+    root.addEventListener('change', async e => {
+      const t = e.target; if (t.type !== 'checkbox') return;
+      const k = Number(t.dataset.k), td = st.todos.find(x => x.ActivityKey === k); if (!td) return;
+      const prev = td.Completed; td.Completed = t.checked ? 1 : 0; render();
+      try {
+        const row = Object.assign({}, td, { ProjectKey: Number(a.projectKey), StatusName: td.StatusName || '', rowstate: 'U' });
+        const res = await call('Modules.Projects.Schedule', 'updateToDo', { projectKey: Number(a.projectKey), todos: [row] }, true);
+        if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
+      } catch (err) { td.Completed = prev; st.msg = 'Could not update: ' + (err && err.message || err); render(); }
+    });
+    ['click', 'mousedown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
+    guardKeys(host);
+    load();
+    return host;
+  }
+
+  // Post bodies are HTML written by people (and email replies). Keep simple formatting and links, drop everything else.
+  function cleanPostHtml(html) {
+    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    const keep = new Set(['P', 'BR', 'A', 'B', 'STRONG', 'I', 'EM', 'U', 'UL', 'OL', 'LI', 'SPAN', 'DIV', 'BLOCKQUOTE', 'IMG', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'H1', 'H2', 'H3', 'H4', 'PRE', 'CODE', 'HR']);
+    const drop = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'SVG', 'MATH', 'TEMPLATE']);
+    [...doc.body.querySelectorAll('*')].reverse().forEach(el => {
+      if (drop.has(el.tagName)) { el.remove(); return; }
+      if (!keep.has(el.tagName)) { el.replaceWith(...el.childNodes); return; }
+      const href = el.tagName === 'A' ? el.getAttribute('href') || '' : '';
+      const src = el.tagName === 'IMG' ? el.getAttribute('src') || '' : '';
+      [...el.attributes].forEach(at => el.removeAttribute(at.name));
+      if (el.tagName === 'A') {
+        if (/^(https?:|mailto:)/i.test(href.trim())) { el.setAttribute('href', href.trim()); el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+      }
+      if (el.tagName === 'IMG') {
+        if (/^(https:\/\/|\/platinum\/)/i.test(src.trim())) el.setAttribute('src', src.trim()); else el.remove();
+      }
+    });
+    return doc.body.innerHTML;
+  }
+
+  const fmtWhen = d => {
+    if (!d) return '';
+    const x = new Date(String(d).slice(0, 19));
+    if (isNaN(x)) return '';
+    const sameYear = x.getFullYear() === new Date().getFullYear();
+    return x.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }) + ', ' + x.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  };
+
+  // ----- main column: this task's conversations, threaded, with a reply box per thread -----
+  function asgConvHost(a) {
+    const host = document.createElement('div');
+    host.id = 'wjl-asgconv';
+    host.dataset.tk = String(a.taskKey);
+    host.style.cssText = 'display:block;margin:8px 0 28px;max-width:920px';
+    const root = host.attachShadow({ mode: 'open' });
+    const st = { posts: null, err: '', open: new Set(), more: new Set(), drafts: {} };
+    root.innerHTML = `<style>${SHADOW_BASE}
+      :host { font-size: 13px; }
+      .top { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+      .top h2 { font-size: 20px; font-weight: 500; color: #333; margin: 0; }
+      .top .sp { flex: 1; }
+      .thread { border: 1px solid #e6e6e6; border-radius: 10px; background: #fff; margin: 0 0 14px; overflow: hidden; }
+      .subj { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px; background: #fafafa; border-bottom: 1px solid #eee; font-weight: 600; font-size: 13px; color: #333; }
+      .subj .s { flex: 1; min-width: 0; }
+      .subj .open { font-weight: 400; }
+      .msg { display: flex; gap: 10px; padding: 12px 14px 4px; }
+      .msg + .msg { border-top: 1px solid #f2f2f2; }
+      .av { width: 30px; height: 30px; border-radius: 50%; flex: none; background: #e4e4e4 center/cover no-repeat; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #666; overflow: hidden; }
+      .av img { width: 100%; height: 100%; object-fit: cover; }
+      .mb { flex: 1; min-width: 0; }
+      .who { font-size: 12px; color: #999; margin-bottom: 2px; }
+      .who b { color: #333; font-weight: 600; margin-right: 6px; }
+      .txt { font-size: 13px; line-height: 1.5; color: #333; word-break: break-word; overflow-wrap: anywhere; }
+      .txt p { margin: 0 0 8px; }
+      .txt img { max-width: 100%; height: auto; }
+      .txt a { color: #1a8fbf; }
+      .txt table { border-collapse: collapse; } .txt td, .txt th { border: 1px solid #e3e3e3; padding: 3px 6px; }
+      .clamp { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+      .att { font-size: 11px; color: #888; margin: 0 0 8px; }
+      .tog { margin: 0 0 8px; }
+      .earlier { padding: 8px 14px 0 54px; }
+      .reply { display: flex; gap: 8px; align-items: flex-end; padding: 10px 14px 12px 54px; border-top: 1px solid #f2f2f2; }
+      .reply textarea { flex: 1; min-width: 0; min-height: 36px; max-height: 240px; resize: vertical; line-height: 1.4; }
+      .hint { font-size: 11px; color: #aaa; padding: 0 14px 10px 54px; margin-top: -6px; }
+      .empty { border: 1px dashed #d8d8d8; border-radius: 10px; padding: 16px; color: #888; font-size: 13px; }
+    </style><div class="top"><h2>Conversations</h2><span class="count">…</span><span class="sp"></span><button type="button" class="btn newpost">New conversation</button></div><div class="list"><div class="muted">Loading conversations…</div></div>`;
+
+    const load = async () => {
+      try {
+        const res = await call('Modules.Projects.Production', 'getConversations', { Entity: 'tTask', EntityKey: a.taskKey }, true);
+        if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+        st.posts = (res.data && res.data.diary) || []; st.err = '';
+      } catch (e) { st.posts = st.posts || []; st.err = 'Could not load conversations: ' + (e && e.message || e); }
+      render();
+    };
+    host.wjlLoad = load;
+
+    const initials = n => String(n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    const msgHtml = p => {
+      const key = p.ActivityKey, html = cleanPostHtml(p.Notes);
+      const long = (p.Notes || '').replace(/<[^>]*>/g, '').length > 600;
+      const open = st.open.has(key);
+      return `<div class="msg"><div class="av">${initials(p.AddedByUserName || p.OriginatorUserName)}${p.AddedByKey ? `<img alt="" src="${BASE}common/logo.aspx?logo=avatar&k=${p.AddedByKey}&type=User">` : ''}</div>
+        <div class="mb"><div class="who"><b>${esc(p.AddedByUserName || p.OriginatorUserName || 'Someone')}</b>${esc(fmtWhen(p.DateAdded))}</div>
+        <div class="txt ${long && !open ? 'clamp' : ''}">${html || '<span class="muted">(no text)</span>'}</div>
+        ${long ? `<button type="button" class="link tog" data-k="${key}">${open ? 'Show less' : 'Show more'}</button>` : ''}
+        ${p.AttachmentCount ? `<div class="att">${p.AttachmentCount} attachment${p.AttachmentCount > 1 ? 's' : ''} · open the thread to view</div>` : ''}</div></div>`;
+    };
+
+    const render = () => {
+      const list = root.querySelector('.list');
+      // Remember reply drafts across re-renders.
+      root.querySelectorAll('textarea[data-root]').forEach(t => { st.drafts[t.dataset.root] = t.value; });
+      const posts = st.posts || [];
+      const threads = new Map();
+      posts.forEach(p => {
+        const rk = p.RootActivityKey || p.ActivityKey;
+        if (!threads.has(rk)) threads.set(rk, []);
+        threads.get(rk).push(p);
+      });
+      const arr = [...threads.entries()].map(([rk, items]) => {
+        items.sort((x, y) => String(x.DateAdded).localeCompare(String(y.DateAdded)));
+        const first = items.find(x => x.ActivityKey === rk) || items[0];
+        const last = items[items.length - 1];
+        return { rk, items, subject: first.Subject || last.Subject || '(no subject)', latest: String(last.DateAdded || '') };
+      }).sort((x, y) => y.latest.localeCompare(x.latest));
+      root.querySelector('.count').textContent = arr.length;
+      if (!arr.length) {
+        list.innerHTML = (st.err ? `<div class="err">${esc(st.err)}</div>` : '') + `<div class="empty">No conversations on this task yet. Start one to ask a question or share an update with the team.</div>`;
+        return;
+      }
+      list.innerHTML = (st.err ? `<div class="err">${esc(st.err)}</div>` : '') + arr.map(t => {
+        const showAll = st.more.has(t.rk) || t.items.length <= 4;
+        const items = showAll ? t.items : [t.items[0]].concat(t.items.slice(-2));
+        const hidden = t.items.length - items.length;
+        return `<div class="thread"><div class="subj"><span class="s">${esc(t.subject)}</span>${t.items.length > 1 ? `<span class="count">${t.items.length}</span>` : ''}<a class="link open" href="${BASE}?aid=projects.diary.thread&k=${t.rk}">Open thread</a></div>
+          ${msgHtml(items[0])}
+          ${hidden ? `<div class="earlier"><button type="button" class="link moreb" data-rk="${t.rk}">Show ${hidden} earlier repl${hidden > 1 ? 'ies' : 'y'}</button></div>` : ''}
+          ${items.slice(1).map(msgHtml).join('')}
+          <div class="reply"><textarea rows="1" data-root="${t.rk}" placeholder="Write a reply"></textarea><button type="button" class="btn rbtn" data-rk="${t.rk}">Reply</button></div>
+          <div class="hint">Opens Workamajig's reply screen with your text and the usual recipients; press Post Reply there.</div></div>`;
+      }).join('');
+      root.querySelectorAll('textarea[data-root]').forEach(t => { t.value = st.drafts[t.dataset.root] || ''; });
+    };
+
+    root.addEventListener('error', e => { if (e.target.tagName === 'IMG' && e.target.parentElement && e.target.parentElement.classList.contains('av')) e.target.remove(); }, true);
+    root.addEventListener('input', e => {
+      if (e.target.tagName === 'TEXTAREA') { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 240) + 'px'; }
+    });
+    root.addEventListener('click', e => {
+      const t = e.target;
+      if (t.classList.contains('tog')) { const k = Number(t.dataset.k); st.open.has(k) ? st.open.delete(k) : st.open.add(k); return render(); }
+      if (t.classList.contains('moreb')) { st.more.add(Number(t.dataset.rk)); return render(); }
+      if (t.classList.contains('newpost')) {
+        location.assign(`${BASE}?aid=projects.diary.add&k=${a.projectKey}&io=${encodeURIComponent(JSON.stringify({ taskKey: a.taskKey }))}`);
+        return;
+      }
+      if (t.classList.contains('rbtn')) {
+        const rk = Number(t.dataset.rk);
+        const ta = root.querySelector(`textarea[data-root="${rk}"]`);
+        const text = (ta && ta.value || '').trim();
+        if (text) { try { sessionStorage.setItem(SS_REPLY, JSON.stringify({ parent: rk, text, ts: Date.now() })); } catch (err) {} }
+        st.drafts[rk] = '';
+        location.assign(`${BASE}?aid=projects.diary.reply&k=${rk}`);
+      }
+    });
+    ['click', 'mousedown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
+    guardKeys(host);
+    load();
+    return host;
+  }
+
+  // Reply screen opened from the inline reply box: put the typed text in the editor (recipients stay as Workamajig sets them).
+  function handlePendingReply() {
+    let req = null;
+    try { req = JSON.parse(sessionStorage.getItem(SS_REPLY) || 'null'); } catch (e) {}
+    if (!req) return;
+    if (Date.now() - req.ts > 120000) { try { sessionStorage.removeItem(SS_REPLY); } catch (e) {} return; }
+    let tries = 0;
+    const t = setInterval(() => {
+      const pg = document.querySelector('page.open[data-aid="projects.diary.reply"]');
+      const model = pg && pg.view && pg.view.module && pg.view.module.model;
+      const ed = pg && pg.querySelector('richtexteditor[name="Notes"]');
+      const ready = model && model.reply && model.reply.si && Number(model.reply.si.ParentActivityKey) === Number(req.parent) && ed;
+      if (!ready) { if (++tries > 80) clearInterval(t); return; }
+      clearInterval(t);
+      try { sessionStorage.removeItem(SS_REPLY); } catch (e) {}
+      const body = String(req.text).split(/\n{2,}/).map(par => '<p>' + esc(par).replace(/\n/g, '<br>') + '</p>').join('');
+      let attempts = 0;
+      const put = () => {
+        ed.focus();
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertHTML', false, body);
+        if (!ed.textContent.trim() && ++attempts < 8) { setTimeout(put, 300); return; }
+        if (!ed.textContent.trim()) { ed.innerHTML = body; ed.dispatchEvent(new Event('input', { bubbles: true })); }
+        try { model.reply.setValue('Notes', '<span class="usr ver2">' + ed.innerHTML + '</span>'); } catch (e) {}
+        toast('Reply prefilled. Check the recipients, then Post Reply');
+      };
+      setTimeout(put, 150);
+    }, 250);
   }
 
   // ---------- Project board (kanban) on the Schedule ----------
@@ -1755,6 +2110,8 @@
       if (btn) btn.style.display = 'none';
       handlePendingTask();
       if (aid() === 'projects.diary.add') handlePendingPost();
+      if (aid() === 'projects.diary.reply') handlePendingReply();
+      if (aid() === ASSIGN_AID) asg.reload = true;
     }
     assignmentPage();
     boardTick();
