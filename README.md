@@ -27,7 +27,8 @@ A **List / Board** switch in the Schedule toolbar (next to the Gantt toggle) sho
 
 - **One card per assignment**, because Workamajig keeps status on each person's assignment, not on the task. Columns are the company statuses (Backlog, Ready, In Progress, Ready for Review/Blocked, Completed) in their Workamajig colors, plus "No status" when present and "Not assigned" for open tasks with nobody on them.
 - **Cards** show task ID and group, task name, due date with overdue / due-today badges, percent complete, assignee and service, and hours logged / planned. Click opens the assignment; ⋯ offers Open assignment, Show in list (spotlights the row), Copy task link, Copy assignment link.
-- **Filters:** a chip per person with open-assignment counts, a search box, and Show completed (starts from the page's Hide Completed Tasks setting; Completed stays a collapsed drop target otherwise).
+- **Filters:** a chip per person with open-assignment counts, a search box, and Show completed.
+- **Columns collapse:** the ‹ / › button on any column header collapses or expands it (a collapsed column is still a drop target, and clicking it expands it). Collapse all / Expand all sit in the toolbar. Choices are remembered per column name; Completed starts collapsed, and Show completed is the same switch as expanding Completed.
 - **Drag a card to another column** to change its status. It uses the same single-assignment call as the Today board (`WJAPP.Modules.Project.Traffic.updateAssignmentStatus`), so Workamajig applies the status's default percent complete just as it does there. Switching back to List reloads the grid so it shows the new statuses.
 - Drawn as an overlay over the grid in a Shadow DOM; the grid itself is never modified.
 
