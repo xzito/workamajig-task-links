@@ -434,7 +434,7 @@
         '#desktop > section > page.wide > header{min-height:90px;padding-bottom:6px}' +
         '#desktop > section > page.wide > header hgroup{min-width:0;flex:1 1 auto}' +
         '#desktop > section > page.wide > header h1{max-width:none !important;white-space:normal !important;font-size:2.4rem !important;line-height:1.2 !important;margin-top:0 !important;overflow:visible !important}' +
-        '#desktop > section > page.wide > header h5{white-space:normal !important;overflow:visible !important}' +
+        '#desktop > section > page.wide > header h5{white-space:normal !important;overflow:visible !important;position:static !important;display:block !important;margin-top:2px !important}' +
         '#wjl-hours{border-collapse:collapse;margin:2px 0 10px;font-size:12px;color:#555}' +
         '#wjl-hours th{font-weight:400;color:#999;text-align:right;padding:0 0 2px 14px}' +
         '#wjl-hours th:first-child{text-align:left;padding-left:0}' +
