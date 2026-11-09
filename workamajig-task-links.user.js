@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.17.0';
+  const VERSION = '0.18.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -865,6 +865,19 @@
     r.querySelector('.board').classList.toggle('on', board.on);
   }
 
+  // Gantt, Templates and Task Detail only apply to the list, so hide them while the board is up.
+  function setListOnlyButtons(hidden) {
+    let st = document.getElementById('wjl-board-hide');
+    if (!st) {
+      st = document.createElement('style');
+      st.id = 'wjl-board-hide';
+      document.head.appendChild(st);
+    }
+    st.textContent = hidden
+      ? 'page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleTemplates"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleSide"]{display:none!important}'
+      : '';
+  }
+
   function openBoard() {
     const pg = schedulePage();
     if (!pg) return;
@@ -874,6 +887,7 @@
     }
     board.on = true; board.projectKey = pk;
     syncToggle();
+    setListOnlyButtons(true);
     if (!board.host) buildBoardHost();
     board.host.style.display = 'block';
     positionBoard();
@@ -885,6 +899,7 @@
   function closeBoard(leaving) {
     const wasOn = board.on;
     board.on = false;
+    setListOnlyButtons(false);
     clearInterval(board.timer);
     if (board.host) board.host.style.display = 'none';
     closeCardMenu();
