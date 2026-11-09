@@ -517,6 +517,11 @@
     }).catch(() => host.remove());
   }
 
+  async function serverPercComp(tuk) {
+    try { const t = ((await call('Modules.Projects.Production', 'loadAssignment', { TaskUserKey: Number(tuk) })).table || [])[0]; return t ? +t.PercComp || 0 : null; }
+    catch (e) { return null; }
+  }
+
   // Assignment status dropdown: same single-assignment call as the Today board and the project board.
   async function setupStatusSelect(sel, a, tuk) {
     const pg = () => document.querySelector('page.open[data-aid="projects.production.assignment"]');
@@ -541,10 +546,12 @@
         const res = await call('WJAPP.Modules.Project.Traffic', 'updateAssignmentStatus', { TaskUserKey: Number(tuk), TaskUserStatusKey: k }, true);
         if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
         // Update the page's own model so its "% complete" button and anything bound to it refresh.
+        const pc = await serverPercComp(tuk);
         const t = ta();
-        if (t && t.si) { t.si.TaskUserStatusKey = k; t.si.StatusName = st.l; if (res.data && res.data.PercComp != null) t.si.PercComp = res.data.PercComp; t.fire(); }
+        if (t && t.si) { t.si.TaskUserStatusKey = k; t.si.StatusName = st.l; if (pc != null) t.si.PercComp = pc; t.fire(); }
         scheduleCache.delete(String(a.projectKey));
-        toast(`Status: ${st.l}` + (res.data && res.data.PercComp != null ? ` · ${res.data.PercComp}% complete` : ''));
+        assignmentCache.delete(Number(tuk));
+        toast(`Status: ${st.l}`);
       } catch (err) {
         toast('Could not change the status: ' + (err && err.message || err));
       }
@@ -1438,7 +1445,7 @@
     try {
       const res = await call('WJAPP.Modules.Project.Traffic', 'updateAssignmentStatus', { TaskUserKey: tuk, TaskUserStatusKey: statusKey }, true);
       if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
-      if (res.data && res.data.PercComp != null) tu.PercComp = res.data.PercComp;
+      const pc = await serverPercComp(tuk); if (pc != null) tu.PercComp = pc;
       board.dirty = true;
       renderBoard();
       toast(`Moved to ${st.l}`);
