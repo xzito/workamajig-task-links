@@ -2114,7 +2114,12 @@
       } else if (st.reloadConv) ch.wjlLoad && ch.wjlLoad();
       st.reloadConv = false;
       slot.appendChild(ch);
-      if (st.scrollConv) { st.scrollConv = false; setTimeout(() => slot.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50); }
+      if (st.scrollConv) {
+        st.scrollConv = false;
+        // Jump (not smooth): the threads load a moment later and would interrupt a smooth scroll, so repeat once.
+        const jump = () => { const mb = board.root.querySelector('.mbody'), sl = board.root.querySelector('.mconvslot'); if (mb && sl) mb.scrollTop += sl.getBoundingClientRect().top - mb.getBoundingClientRect().top - 8; };
+        setTimeout(jump, 30); setTimeout(jump, 900);
+      }
     }
     const ta = board.root.querySelector('.mta');
     if (ta && st.editing) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
