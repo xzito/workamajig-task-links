@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.27.0';
+  const VERSION = '0.27.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -449,7 +449,7 @@
       // Same width the app gives non-"wide" pages, and let the task title wrap instead of truncating.
       // Full width; header row grows with a long title; title wraps at a smaller size instead of truncating.
       wideStyle.textContent = '#desktop > section > page.wide{width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2) !important;grid-template-rows:minmax(90px,auto) 1fr !important}' +
-        '#desktop > section > page.wide > header{min-height:90px;padding-bottom:6px}' +
+        '#desktop > section > page.wide > header{min-height:90px;padding-top:18px;padding-bottom:8px;box-sizing:border-box}' +
         '#desktop > section > page.wide > header hgroup{min-width:0;flex:1 1 auto}' +
         '#desktop > section > page.wide > header h1{max-width:none !important;white-space:normal !important;font-size:2.4rem !important;line-height:1.2 !important;margin-top:0 !important;overflow:visible !important}' +
         '#desktop > section > page.wide > header h5{white-space:normal !important;overflow:visible !important;position:static !important;display:block !important;margin-top:2px !important}' +
