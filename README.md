@@ -23,7 +23,7 @@ Tasks with no assignment slots only get the task link; add an assignment to get 
 
 ### Project board on the Schedule (v0.10)
 
-A **List / Board** switch in the Schedule toolbar (next to the Gantt toggle) shows the project as a kanban board. The choice is remembered.
+A **List / Board** switch at the top right of the Schedule page (next to Workamajig's "saved" indicator, since v0.21) shows the project as a kanban board. The choice is remembered.
 
 - **One card per assignment**, because Workamajig keeps status on each person's assignment, not on the task. Columns are the company statuses (Backlog, Ready, In Progress, Ready for Review/Blocked, Completed) in their Workamajig colors, plus "No status" when present and "Not assigned" for open tasks with nobody on them.
 - **Cards** show task ID and group, task name, due date with overdue / due-today badges, percent complete, assignee and service, and hours logged / planned. ⋯ offers Open assignment, Show in list (spotlights the row), Copy task link, Copy assignment link.
@@ -34,7 +34,7 @@ A **List / Board** switch in the Schedule toolbar (next to the Gantt toggle) sho
 - **Filters:** a chip per person, a search box, and Show completed. Person counts follow the other active filters (search, No description), and whenever any filter is on a "Filtered: …" line shows exactly what is applied, with **Clear filters**.
 - **Project hygiene** (v0.16): a **Hygiene** menu in the board toolbar lists open work with problems, with a count for each: **No description**, **Overdue**, **Over budget** (more hours logged than planned), **No hours planned**, **Not assigned** (tasks with nobody on them, or empty assignment slots). Tick one or more to show only matching cards (any of the ticked issues); "Any issue" ticks all. Cards with no description always carry a badge; Over budget / No hours planned badges appear while those checks are on. Finished work is never counted.
 - **Hygiene in List view** (v0.19): the same **Hygiene** button sits next to the List / Board switch while the list is showing. The list itself isn't filtered (the grid is never modified); instead each issue expands to show its tasks, with the group and person. Click a task to scroll to its row and spotlight it, or **Show these on the board** to open the board with that filter on.
-- **List-only buttons** (v0.18): Workamajig's Gantt, Templates and Task Detail toggles are hidden while the board is open and come back in List view.
+- **List-only controls** (v0.18, v0.21): Workamajig's Gantt, Templates and Task Detail toggles and the column-set picker (for example "PM Advance View") are hidden while the board is open and come back in List view.
 - **Columns collapse:** the ‹ / › button on any column header collapses or expands it (a collapsed column is still a drop target, and clicking it expands it). Collapse all / Expand all sit in the toolbar. Choices are remembered per column name; Completed starts collapsed, and Show completed is the same switch as expanding Completed.
 - **Drag a card to another column** to change its status. It uses the same single-assignment call as the Today board (`WJAPP.Modules.Project.Traffic.updateAssignmentStatus`), so Workamajig applies the status's default percent complete just as it does there. Switching back to List reloads the grid so it shows the new statuses.
 - Drawn as an overlay over the grid in a Shadow DOM; the grid itself is never modified. It sits below Workamajig's header and sidebar fly-out menus, and rises above them only while a card modal is open.
