@@ -1382,7 +1382,7 @@
       if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
       const map = ((res.data && res.data.keyMap) || []).find(x => x.OldKey === -1);
       board.todos.push({ ActivityKey: map ? map.NewKey : Date.now(), TaskKey: taskKey, Subject: subject, Completed: 0, StatusName: '', DisplayOrder: 999 });
-      st.tdDraft = ''; st.focusTodo = true;
+      st.tdDraft = ''; st.focusTodo = true; input.value = '';
     } catch (e) { st.tdMsg = 'Could not add: ' + (e && e.message || e); st.tdDraft = subject; }
     renderModal();
   }
