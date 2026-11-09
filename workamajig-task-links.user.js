@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.21.0';
+  const VERSION = '0.21.1';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1193,6 +1193,7 @@
   function boardTick() {
     if (aid() !== 'projects.schedule.edit2') {
       if (board.on || board.host) closeBoard(true);
+      closeListHygiene();
       board.noAuto = null;
       return;
     }
@@ -1272,9 +1273,20 @@
       .onboard { display: block; border: 0; background: none; padding: 4px 14px 2px 34px; color: #1a8fbf; font-size: 12px; text-decoration: underline; cursor: pointer; }
       .hfoot { padding: 8px 14px 2px; font-size: 11px; color: #999; }
       .msg { padding: 10px 14px; color: #888; font-size: 12px; }
-    </style><div class="wrap"><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div><div class="hmenu" hidden></div>`;
+    </style><div class="wrap"><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div>`;
     r.querySelector('.hyg').addEventListener('click', () => (listHyg.open ? closeListHygiene() : openListHygiene()));
-    r.querySelector('.hmenu').addEventListener('click', onListHygieneClick);
+    // The menu lives in its own layer on <body>: inside the page, an ancestor turns position:fixed into
+    // "relative to the page panel", which pushed the menu down and clipped it at the panel's right edge.
+    if (board.hygMenu) board.hygMenu.remove();
+    const mh = document.createElement('div');
+    mh.id = 'wjl-hyg-menu';
+    mh.style.cssText = 'position:fixed;inset:0 auto auto 0;width:0;height:0;z-index:10001';
+    const mr = mh.attachShadow({ mode: 'open' });
+    mr.innerHTML = `<style>${r.querySelector('style').textContent}</style><div class="hmenu" hidden></div>`;
+    mr.querySelector('.hmenu').addEventListener('click', onListHygieneClick);
+    ['click', 'mousedown', 'keydown'].forEach(t => mh.addEventListener(t, e => e.stopPropagation()));
+    document.body.appendChild(mh);
+    board.hygMenu = mh;
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
     anchor.parentElement.insertBefore(host, anchor);
     board.toggle = host;
@@ -1323,7 +1335,8 @@
     const m = listHyg.model;
     n.textContent = m ? hygieneCounts(m).total : (listHyg.err ? '!' : '…');
     r.querySelector('.hyg').classList.toggle('open', listHyg.open);
-    const menu = r.querySelector('.hmenu');
+    const menu = board.hygMenu && board.hygMenu.shadowRoot.querySelector('.hmenu');
+    if (!menu) return;
     menu.hidden = !listHyg.open;
     if (!listHyg.open) return;
     const b = r.querySelector('.hyg').getBoundingClientRect();
@@ -1356,7 +1369,7 @@
     renderListHygiene();
   }
 
-  function listHygOutside(e) { if (!board.toggle || !e.composedPath().includes(board.toggle)) closeListHygiene(); }
+  function listHygOutside(e) { const path = e.composedPath(); if (!board.toggle || !(path.includes(board.toggle) || (board.hygMenu && path.includes(board.hygMenu)))) closeListHygiene(); }
   function listHygKey(e) { if (e.key === 'Escape') closeListHygiene(); }
 
   function onListHygieneClick(e) {
