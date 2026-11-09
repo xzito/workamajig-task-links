@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.22.0';
+  const VERSION = '0.23.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1517,6 +1517,8 @@
       .b.ob { background: #fde4e4; color: #b3261e; }
       .b.nh { background: #eef1f5; color: #4a5568; }
       .b.nd { background: #fff4d6; color: #8a5a00; }
+      .b.tdb { background: #e6f1fb; color: #0c447c; }
+      .b.tdb.done { background: #eaf3de; color: #3b6d11; }
       .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
       .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
       .col { flex: 0 0 280px; width: 280px; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
@@ -1634,7 +1636,7 @@
       const sp = document.createElement('span'); sp.className = 'av'; sp.style.background = '#8a9bab'; sp.textContent = img.dataset.ini || '?';
       img.replaceWith(sp);
     }, true);
-    root.addEventListener('change', e => { if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); } });
+    root.addEventListener('change', e => { if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); return; } if (e.target.classList.contains('onlytd')) { board.onlyTodos = e.target.checked; renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
     root.addEventListener('mousedown', onCardMouseDown);
@@ -1652,6 +1654,7 @@
       board.data = s.raw;
       board.todos = null; board.todosFor = null;
       renderBoard();
+      loadTodos();
       } catch (e) {
       board.root.querySelector('.cols').innerHTML = `<div class="msg err">Could not load the schedule: ${esc(e && e.message || e)}</div>`;
     }
@@ -1714,7 +1717,7 @@
     // Toolbar: people chips (open work only), search, show completed, refresh.
     // Chip counts = open assignments that pass the other active filters (description, search), so numbers match the board.
     const q = board.search.trim().toLowerCase();
-    const passes = c => !c.done && hygPass(c, false) &&
+    const passes = c => !c.done && hygPass(c, false) && todoPass(c.taskKey) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const people = new Map();
     m.cards.filter(c => !c.done).forEach(c => { const k = c.userKey; const p = people.get(k) || { key: k, name: c.user || 'Unassigned', initials: c.initials, n: 0 }; if (passes(c)) p.n++; people.set(k, p); });
@@ -1725,6 +1728,7 @@
     const bar = board.root.querySelector('.bar');
     bar.innerHTML = `<div class="chips">${chips.join('')}</div>
       <label class="chk"><input type="checkbox" class="showc" ${showDone() ? 'checked' : ''}> Show completed</label>
+      <label class="chk" title="Only tasks that still have unfinished to-dos"><input type="checkbox" class="onlytd" ${board.onlyTodos ? 'checked' : ''}> Has open to-dos</label>
       <button type="button" class="icon collapse-all" title="Collapse every column">Collapse all</button>
       <button type="button" class="icon expand-all" title="Expand every column">Expand all</button>
       ${(() => { const hc = hygieneCounts(m); board.hygCounts = hc; return `<span class="hwrap"><button type="button" class="icon hyg ${board.hyg.size ? 'on' : ''}" title="Project hygiene: find open work with problems">Hygiene <span class="n">${hc.total}</span> ▾</button>${board.hygOpen ? `<div class="hmenu">
@@ -1737,6 +1741,7 @@
         if (board.user) { const p = people.get(board.user); parts.push(esc(p ? p.name : 'one person')); }
         if (board.hyg.size) parts.push(HYGIENE.filter(h => board.hyg.has(h.key)).map(h => h.label.toLowerCase()).join(' or '));
         if (q) parts.push('matching “' + esc(board.search.trim()) + '”');
+        if (board.onlyTodos) parts.push('with open to-dos');
         return parts.length ? `<div class="fsum">Filtered: showing ${parts.join(' · ')} <button type="button" class="mlink fclear">Clear filters</button></div>` : '';
       })()}`;
     board.model = m;
@@ -1747,7 +1752,7 @@
   function renderColumns() {
     const m = board.model; if (!m) return;
     const q = board.search.trim().toLowerCase();
-    const match = c => (!board.user || c.userKey === board.user) && (!board.hyg.size || (!c.done && hygPass(c, false))) &&
+    const match = c => (!board.user || c.userKey === board.user) && (!board.hyg.size || (!c.done && hygPass(c, false))) && todoPass(c.taskKey) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const sortCards = (a, b) => ((a.days == null) - (b.days == null)) || ((a.days ?? 0) - (b.days ?? 0)) || (a.order - b.order);
     const cols = [];
@@ -1759,7 +1764,7 @@
       cols.push({ key: st.key, name: st.name, color: st.color, cards, drop: true });
     });
     if (!board.user) {
-      const un = m.unassigned.filter(t => hygPass(t, true)).filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
+      const un = m.unassigned.filter(t => hygPass(t, true) && todoPass(t.taskKey)).filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
       if (un.length) cols.push({ key: -2, name: 'Not assigned', color: '#9b9b9b', cards: un, drop: false, unassigned: true });
     }
     cols.forEach(col => { col.collapsed = isCollapsed(col.name); });
@@ -1795,7 +1800,7 @@
       <div class="top"><span class="id">${esc(c.taskId)}</span><span class="grp">${esc(c.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(c.taskName)}</div>
-      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}${c.noDesc && !c.done ? '<span class="b nd">No description</span>' : ''}${!c.done && board.hyg.has('overbudget') && c.planned > 0 && c.actual > c.planned ? '<span class="b ob">Over budget</span>' : ''}${!c.done && board.hyg.has('nohours') && !(c.planned > 0) ? '<span class="b nh">No hours planned</span>' : ''}</div>
+      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}${todoBadge(c.taskKey)}${c.noDesc && !c.done ? '<span class="b nd">No description</span>' : ''}${!c.done && board.hyg.has('overbudget') && c.planned > 0 && c.actual > c.planned ? '<span class="b ob">Over budget</span>' : ''}${!c.done && board.hyg.has('nohours') && !(c.planned > 0) ? '<span class="b nh">No hours planned</span>' : ''}</div>
       ${c.pc ? `<div class="prog"><i style="width:${Math.min(100, c.pc)}%"></i></div>` : ''}
       <div class="foot">${avatarHtml(c.userKey, c.user, c.initials)}<span class="who">${esc(c.user || 'Unassigned slot')}<small>${esc(c.service)}</small></span>
       <span class="h ${overHrs ? 'over' : ''}" title="Logged / planned hours">${fmtH(c.actual)} / ${fmtH(c.planned)}</span></div></a>`;
@@ -1806,7 +1811,7 @@
       <div class="top"><span class="id">${esc(t.taskId)}</span><span class="grp">${esc(t.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(t.taskName)}</div>
-      <div class="badges">${label ? `<span class="b">Due ${label}</span>` : ''}<span class="b">No assignee</span>${t.noDesc ? '<span class="b nd">No description</span>' : ''}</div></div>`;
+      <div class="badges">${label ? `<span class="b">Due ${label}</span>` : ''}<span class="b">No assignee</span>${todoBadge(t.taskKey)}${t.noDesc ? '<span class="b nd">No description</span>' : ''}</div></div>`;
   }
 
   function onBoardClick(e) {
@@ -1816,7 +1821,7 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
-    if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.search = ''; clearNativeSearch(); board.hygOpen = false; renderBoard(); return; }
+    if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.onlyTodos = false; board.search = ''; clearNativeSearch(); board.hygOpen = false; renderBoard(); return; }
     if (t.closest && t.closest('.hyg')) { board.hygOpen = !board.hygOpen; renderBoard(); return; }
     if (t.classList.contains('hall')) { HYGIENE.forEach(h => board.hyg.add(h.key)); renderBoard(); return; }
     if (t.classList.contains('hnone')) { board.hyg.clear(); renderBoard(); return; }
@@ -1915,7 +1920,23 @@
       if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
       if (board.todosFor === pk) board.todos = (res.data && res.data.todos) || [];
     } catch (e) { if (board.todosFor === pk) { board.todos = []; board.todoErr = 'Could not load to-dos: ' + (e && e.message || e); } }
+    renderBoard();
     if (board.modal) renderModal();
+  }
+  // TaskKey -> { open, total } from the project's to-do list (null until loaded).
+  function todoStats() {
+    if (!board.todos || board.todosFor !== board.projectKey) return null;
+    const map = new Map();
+    board.todos.forEach(x => { const s = map.get(x.TaskKey) || { open: 0, total: 0 }; s.total++; if (!x.Completed) s.open++; map.set(x.TaskKey, s); });
+    return map;
+  }
+  const todoPass = taskKey => { if (!board.onlyTodos) return true; const m = todoStats(); const s = m && m.get(taskKey); return !!(s && s.open); };
+  function todoBadge(taskKey) {
+    const m = todoStats(); const s = m && m.get(taskKey);
+    if (!s) return '';
+    return s.open
+      ? `<span class="b tdb" title="${s.open} open of ${s.total} to-dos">${s.total - s.open}/${s.total} to-dos</span>`
+      : `<span class="b tdb done" title="All ${s.total} to-dos done">✓ ${s.total}/${s.total} to-dos</span>`;
   }
   function renderTodoPanel(taskKey, st) {
     const R = window.System && System.rights || {};
@@ -1948,16 +1969,16 @@
       board.todos.push({ ActivityKey: map ? map.NewKey : Date.now(), TaskKey: taskKey, Subject: subject, Completed: 0, StatusName: '', DisplayOrder: 999 });
       st.tdDraft = ''; st.focusTodo = true; input.value = '';
     } catch (e) { st.tdMsg = 'Could not add: ' + (e && e.message || e); st.tdDraft = subject; }
-    renderModal();
+    renderBoard(); renderModal();
   }
   async function toggleTodo(key, completed) {
     const st = board.modal; const td = (board.todos || []).find(x => x.ActivityKey === key); if (!td || !st) return;
-    const prev = td.Completed; td.Completed = completed ? 1 : 0; st.tdMsg = ''; renderModal();
+    const prev = td.Completed; td.Completed = completed ? 1 : 0; st.tdMsg = ''; renderBoard(); renderModal();
     try {
       const row = Object.assign({}, td, { ProjectKey: Number(board.projectKey), StatusName: td.StatusName || '', rowstate: 'U' });
       const res = await call('Modules.Projects.Schedule', 'updateToDo', { projectKey: Number(board.projectKey), todos: [row] }, true);
       if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
-    } catch (e) { td.Completed = prev; st.tdMsg = 'Could not update: ' + (e && e.message || e); renderModal(); }
+    } catch (e) { td.Completed = prev; st.tdMsg = 'Could not update: ' + (e && e.message || e); renderBoard(); renderModal(); }
   }
   async function deleteTodo(key) {
     const st = board.modal; const td = (board.todos || []).find(x => x.ActivityKey === key); if (!td || !st) return;
@@ -1967,7 +1988,7 @@
       if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
       board.todos = board.todos.filter(x => x.ActivityKey !== key); st.tdMsg = '';
     } catch (e) { st.tdMsg = 'Could not delete: ' + (e && e.message || e); }
-    renderModal();
+    renderBoard(); renderModal();
   }
 
   async function onModalClick(e) {
