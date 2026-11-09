@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.11.1
+// @version      0.12.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.11.1';
+  const VERSION = '0.12.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -446,6 +446,7 @@
     if (!on) return;
 
     const key = qs().get('k');
+    assignmentLinks(key);
     const due = document.querySelector('page.open div.pad-b-l > h2');
     if (!key || !due || due.parentElement.querySelector('#wjl-hours')) return;
     const box = document.createElement('table');
@@ -467,6 +468,46 @@
       rows.forEach(r => box.appendChild(r));
     }).catch(() => box.remove());
     getAssignment(key).then(a => { if (a.taskKey) missingDescription(a); }).catch(() => {});
+  }
+
+  // Small action row under the assignment title: open the task in its schedule, copy task / assignment links.
+  function assignmentLinks(key) {
+    const hg = document.querySelector('page.open[data-aid="projects.production.assignment"] > header hgroup');
+    if (!key || !hg || hg.querySelector('#wjl-asglinks')) return;
+    const host = document.createElement('div');
+    host.id = 'wjl-asglinks';
+    host.style.cssText = 'display:block;margin-top:6px';
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `<style>
+      :host { all: initial; display: block; font-family: inherit; color-scheme: light; }
+      * { box-sizing: border-box; font-family: inherit; }
+      .row { display: flex; flex-wrap: wrap; gap: 6px; }
+      a, button { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; line-height: 1; padding: 6px 10px; border: 1px solid #d6d6d6; border-radius: 999px; background: #fff; color: #333; cursor: pointer; text-decoration: none; }
+      a:hover, button:hover { background: #f4f4f4; border-color: #c4c4c4; }
+      svg { width: 13px; height: 13px; flex: none; }
+      [hidden] { display: none !important; }
+    </style>
+    <div class="row" hidden>
+      <a class="open" title="Open this task in the project schedule, spotlighted"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>Open in schedule</a>
+      <button type="button" class="ctask" title="Copy a link that opens the schedule and spotlights this task"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 013.6 3.6L10.6 8M9 11.5l-1.2 1.2a2.6 2.6 0 01-3.6-3.6L5.4 8"/></svg>Copy task link</button>
+      <button type="button" class="casg" title="Copy the link to this assignment page"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 013.6 3.6L10.6 8M9 11.5l-1.2 1.2a2.6 2.6 0 01-3.6-3.6L5.4 8"/></svg>Copy assignment link</button>
+    </div>`;
+    ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
+    hg.appendChild(host);
+    getAssignment(key).then(a => {
+      if (!a || !a.projectKey || !a.taskKey) { host.remove(); return; }
+      const taskUrl = urls.task(a.projectKey, a.taskKey);
+      const open = root.querySelector('.open');
+      open.href = taskUrl;
+      // Same-tab click: stash the task so the schedule spotlights it (the app strips the #task hash on load).
+      open.addEventListener('click', e => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+        try { sessionStorage.setItem(SS_KEY, String(a.taskKey)); } catch (err) {}
+      });
+      root.querySelector('.ctask').addEventListener('click', () => copy(taskUrl, 'task link'));
+      root.querySelector('.casg').addEventListener('click', () => copy(urls.assignment(key), 'assignment link'));
+      root.querySelector('.row').hidden = false;
+    }).catch(() => host.remove());
   }
 
   // "Description of Work" tab: say so when the task has no description, and offer the next step.
