@@ -850,7 +850,7 @@
       button.on { background: #333; color: #fff; font-weight: 600; }
       [hidden] { display: none !important; }
       .wrap { display: inline-flex; align-items: center; gap: 8px; }
-      .hyg { border: 1px solid #cfcfcf; border-radius: 8px; }
+      .hyg { border: 1px solid #cfcfcf; border-radius: 8px; white-space: nowrap; }
       .hyg .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
       .hyg.open { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
       .hmenu { position: fixed; z-index: 10001; width: 380px; max-height: 70vh; overflow: auto; background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 8px 0; font-size: 13px; color: #333; }
