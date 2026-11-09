@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.26.0';
+  const VERSION = '0.27.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -837,7 +837,6 @@
       asgStyle = document.createElement('style');
       asgStyle.id = 'wjl-asg2';
       asgStyle.textContent =
-        `${ASG} > section > sidesection{order:2 !important;width:330px !important;flex:none !important;border-left:1px solid #ececec;background:#fafafa}` +
         `${ASG} > section > sidesection div.pad-b-l > div.muted.x1-2,${ASG} > section > sidesection div.pad-b-l > div:has(canvas){display:none !important}` +
         `${ASG} button[data-action="clickTab"][data-key="todo"],${ASG} button[data-action="clickTab"][data-key="conv"]{display:none !important}`;
     }
@@ -856,8 +855,16 @@
     }
     // The app can reuse this page for another assignment; drop hosts that belong to a different task.
     pg.querySelectorAll('#wjl-asgtodo, #wjl-asgconv').forEach(h => { if (h.dataset.tk !== String(a.taskKey)) h.remove(); });
-    const side = pg.querySelector(':scope > section > sidesection div.pad-b-l');
-    if (side && !side.parentElement.querySelector('#wjl-asgtodo')) side.insertAdjacentElement('afterend', asgTodoHost(a));
+    // Workamajig's side column stays on the left; to-dos get their own rail on the right of the page.
+    const body = pg.querySelector(':scope > section > page-body');
+    let rail = pg.querySelector(':scope > section > #wjl-asgrail');
+    if (body && !rail) {
+      rail = document.createElement('aside');
+      rail.id = 'wjl-asgrail';
+      rail.style.cssText = 'display:block;flex:none;width:300px;box-sizing:border-box;border-left:1px solid #ececec;background:#fafafa;padding:20px 18px;overflow:auto';
+      body.insertAdjacentElement('afterend', rail);
+    }
+    if (rail && !rail.querySelector('#wjl-asgtodo')) rail.appendChild(asgTodoHost(a));
     const sec = pg.querySelector('[data-bind-visible="dp@section == \'desc\'"]');
     let conv = sec && sec.querySelector('#wjl-asgconv');
     if (sec && !conv) {
@@ -895,7 +902,7 @@
     const host = document.createElement('div');
     host.id = 'wjl-asgtodo';
     host.dataset.tk = String(a.taskKey);
-    host.style.cssText = 'display:block;margin:0 0 18px;padding:0 20px 0 0';
+    host.style.cssText = 'display:block';
     const root = host.attachShadow({ mode: 'open' });
     const st = { todos: null, showDone: false, msg: '', busy: false };
     const R = () => (window.System && System.rights) || {};
