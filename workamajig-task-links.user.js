@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.27.2';
+  const VERSION = '0.28.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1787,7 +1787,11 @@
       .mp small { display: block; font-size: 11px; color: #999; }
       .mpeople { display: flex; flex-wrap: wrap; gap: 10px 22px; }
       .mfoot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 22px; border-top: 1px solid #eee; background: #fafafa; border-radius: 0 0 12px 12px; }
-      .mbtn { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; border: 1px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; }
+      .mbtn { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; border: 1px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; line-height: 1.2; }
+      .mbtn .ic { width: 14px; height: 14px; flex: none; }
+      .msplit { display: inline-flex; }
+      .msplit .mopen { border-radius: 8px 0 0 8px; }
+      .msplit .mnewtab { border-radius: 0 8px 8px 0; border-left: 1px solid rgba(255,255,255,.45); padding: 8px 10px; }
       .mbtn:hover { background: #f3f3f3; }
       .mbtn.primary { background: #7ab51d; border-color: #7ab51d; color: #fff; font-weight: 600; }
       .mbtn.primary:hover { background: #6a9f18; }
@@ -2073,12 +2077,12 @@
         ${people ? `<label>Also on this task</label><div class="mpeople">${people}</div>` : ''}
       </div>${todoHtml}</div>
       <div class="mfoot">
-        ${tu ? `<button type="button" class="mbtn primary mopen">Open full assignment</button>` : ''}
+        ${tu ? `<span class="msplit"><button type="button" class="mbtn primary mopen">Open full assignment</button><a class="mbtn primary mnewtab" href="${urls.assignment(tu.TaskUserKey)}" target="_blank" rel="noopener" title="Open the assignment in a new tab" aria-label="Open the assignment in a new tab"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M12 9.5v3a1 1 0 01-1 1H3.5a1 1 0 01-1-1V5a1 1 0 011-1h3"/></svg></a></span>` : ''}
         ${canEdit ? `<button type="button" class="mbtn ${tu ? '' : 'primary'} massign">${tu ? 'Manage assignees' : 'Assign people'}</button>` : ''}
         <button type="button" class="mbtn mlist">Show in list</button>
         <span class="spacer"></span>
-        <button type="button" class="mbtn mcopyt">Copy task link</button>
-        ${tu ? `<button type="button" class="mbtn mcopya">Copy assignment link</button>` : ''}
+        <button type="button" class="mbtn mcopyt" title="Copy a link that opens the schedule and spotlights this task"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.75A1.25 1.25 0 009.25 2.5h-5.5A1.25 1.25 0 002.5 3.75v5.5a1.25 1.25 0 001.25 1.25H5.5"/></svg>Copy task link</button>
+        ${tu ? `<button type="button" class="mbtn mcopya" title="Copy the link to this assignment page"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.75A1.25 1.25 0 009.25 2.5h-5.5A1.25 1.25 0 002.5 3.75v5.5a1.25 1.25 0 001.25 1.25H5.5"/></svg>Copy assignment link</button>` : ''}
       </div></div></div>`;
     if (old) old.outerHTML = html; else board.root.querySelector('.wrap').insertAdjacentHTML('beforeend', html);
     const ta = board.root.querySelector('.mta');
@@ -2183,7 +2187,9 @@
   }
 
   async function onModalClick(e) {
-    const t = e.target, st = board.modal; if (!st) return;
+    const st = board.modal; if (!st) return;
+    // A click on a button's icon lands on the <svg>/<path>; treat it as a click on the button.
+    const t = (e.target.closest && e.target.closest('svg') && e.target.closest('button, a')) || e.target;
     const ref = st.ref;
     if (t.classList.contains('mbg') || t.classList.contains('mx')) { closeModal(); return; }
     if (t.classList.contains('tdplus')) { addTodo(); return; }
@@ -2232,6 +2238,7 @@
     m.className = 'menu';
     const items = [];
     if (tuk) items.push(['Open assignment', () => openApp(ASSIGN_AID, tuk)]);
+    if (tuk) items.push(['Open assignment in new tab', () => window.open(urls.assignment(tuk), '_blank', 'noopener')]);
     items.push(['Show in list', () => showInList(taskKey)]);
     items.push(['Copy task link', () => copy(urls.task(pk, taskKey), 'task link')]);
     if (tuk) items.push(['Copy assignment link', () => copy(urls.assignment(tuk), 'assignment link')]);
