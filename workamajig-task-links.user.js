@@ -880,11 +880,9 @@
     }, true);
     root.addEventListener('input', e => { if (e.target.classList.contains('search')) { board.search = e.target.value; renderColumns(); } });
     root.addEventListener('change', e => { if (e.target.classList.contains('showc')) { board.showCompleted = e.target.checked; renderBoard(); } });
-    root.addEventListener('dragstart', onDragStart);
-    root.addEventListener('dragend', () => { root.querySelectorAll('.dragging').forEach(x => x.classList.remove('dragging')); root.querySelectorAll('.col.drop').forEach(x => x.classList.remove('drop')); board.drag = null; });
-    root.addEventListener('dragover', onDragOver);
-    root.addEventListener('dragleave', e => { const col = e.target.closest && e.target.closest('.col'); if (col && !col.contains(e.relatedTarget)) col.classList.remove('drop'); });
-    root.addEventListener('drop', onDrop);
+    // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
+    root.addEventListener('dragstart', e => e.preventDefault());
+    root.addEventListener('mousedown', onCardMouseDown);
     document.body.appendChild(host);
     board.host = host; board.root = root;
   }
@@ -995,7 +993,7 @@
   }
   function cardHtml(c, col) {
     const overHrs = c.planned > 0 && c.actual > c.planned;
-    return `<a class="card" draggable="true" data-tuk="${c.tuk}" data-task="${c.taskKey}" href="${urls.assignment(c.tuk)}" style="--c:${col.color}">
+    return `<a class="card" draggable="false" data-tuk="${c.tuk}" data-task="${c.taskKey}" href="${urls.assignment(c.tuk)}" style="--c:${col.color}">
       <div class="top"><span class="id">${esc(c.taskId)}</span><span class="grp">${esc(c.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(c.taskName)}</div>
@@ -1015,6 +1013,7 @@
 
   function onBoardClick(e) {
     const t = e.target;
+    if (board.justDragged) { e.preventDefault(); e.stopPropagation(); board.justDragged = false; return; }
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
@@ -1059,33 +1058,47 @@
     }, 400);
   }
 
-  // ---- drag and drop ----
-  function onDragStart(e) {
+  // ---- drag and drop (mouse events) ----
+  function onCardMouseDown(e) {
+    if (e.button !== 0) return;
     const card = e.target.closest && e.target.closest('.card[data-tuk]');
-    if (!card) { e.preventDefault(); return; }
-    closeCardMenu();
-    board.drag = Number(card.dataset.tuk);
-    card.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', String(board.drag)); } catch (err) {}
-  }
-  function onDragOver(e) {
-    if (!board.drag) return;
-    const col = e.target.closest && e.target.closest('.col');
-    if (!col || col.dataset.drop !== '1') return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    board.root.querySelectorAll('.col.drop').forEach(x => { if (x !== col) x.classList.remove('drop'); });
-    col.classList.add('drop');
-  }
-  function onDrop(e) {
-    const col = e.target.closest && e.target.closest('.col');
-    const tuk = board.drag;
-    board.root.querySelectorAll('.col.drop').forEach(x => x.classList.remove('drop'));
-    board.drag = null;
-    if (!col || col.dataset.drop !== '1' || !tuk) return;
-    e.preventDefault();
-    moveAssignment(tuk, Number(col.dataset.status));
+    if (!card || e.target.closest('.more')) return;
+    const start = { x: e.clientX, y: e.clientY };
+    const r = card.getBoundingClientRect();
+    let ghost = null, overCol = null;
+    const colAt = (x, y) => { const el = board.root.elementFromPoint(x, y); const col = el && el.closest && el.closest('.col'); return col && col.dataset.drop === '1' ? col : null; };
+    const move = ev => {
+      if (!ghost) {
+        if (Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 6) return;
+        closeCardMenu();
+        ghost = card.cloneNode(true);
+        Object.assign(ghost.style, { position: 'fixed', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', margin: '0', zIndex: '10', pointerEvents: 'none', transform: 'rotate(2deg)', boxShadow: '0 10px 28px rgba(0,0,0,.22)', opacity: '.95' });
+        board.root.querySelector('.wrap').appendChild(ghost);
+        card.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+      }
+      ev.preventDefault();
+      ghost.style.left = (r.left + ev.clientX - start.x) + 'px';
+      ghost.style.top = (r.top + ev.clientY - start.y) + 'px';
+      const col = colAt(ev.clientX, ev.clientY);
+      if (col !== overCol) { if (overCol) overCol.classList.remove('drop'); overCol = col; if (col) col.classList.add('drop'); }
+      // Auto-scroll the columns strip near its edges.
+      const strip = board.root.querySelector('.cols'), sr = strip.getBoundingClientRect();
+      if (ev.clientX > sr.right - 40) strip.scrollLeft += 14; else if (ev.clientX < sr.left + 40) strip.scrollLeft -= 14;
+    };
+    const up = ev => {
+      window.removeEventListener('mousemove', move, true);
+      window.removeEventListener('mouseup', up, true);
+      document.body.style.userSelect = '';
+      if (!ghost) return;
+      ghost.remove(); card.classList.remove('dragging');
+      if (overCol) overCol.classList.remove('drop');
+      board.justDragged = true; setTimeout(() => { board.justDragged = false; }, 0);
+      const col = colAt(ev.clientX, ev.clientY);
+      if (col) moveAssignment(Number(card.dataset.tuk), Number(col.dataset.status));
+    };
+    window.addEventListener('mousemove', move, true);
+    window.addEventListener('mouseup', up, true);
   }
 
   async function moveAssignment(tuk, statusKey) {
