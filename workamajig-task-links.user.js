@@ -918,7 +918,7 @@
       const dueRaw = tu.APlanComplete || t.PlanComplete;
       const due = dueRaw ? new Date(String(dueRaw).slice(0, 10) + 'T00:00:00') : null;
       const days = due ? Math.round((due - today) / 864e5) : null;
-      return { tuk: tu.TaskUserKey, taskKey: tu.TaskKey, status, done, user: (tu.UserName || '').trim(), userKey: tu.UserKey || 0,
+      return { tuk: tu.TaskUserKey, taskKey: tu.TaskKey, status, done, user: (tu.UserName || '').trim(), userKey: tu.UserKey || -1,
         initials: tu.Initials || '', service: tu.ServiceDescription || '', actual: +tu.ActualHours || 0, planned: +tu.Hours || 0,
         pc: +tu.PercComp || 0, due, days, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0 };
     });
@@ -982,7 +982,7 @@
   const fmtH = h => (Math.round(h * 100) / 100) + 'h';
   function avatarHtml(userKey, name, initials) {
     const ini = esc(initials || (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2));
-    if (!userKey) return `<span class="av" style="background:#bbb">?</span>`;
+    if (!userKey || userKey < 0) return `<span class="av" style="background:#bbb">?</span>`;
     return `<img class="av" alt="" src="${BASE}common/logo.aspx?logo=avatar&k=${userKey}&type=User" title="${esc(name)}" data-ini="${ini}">`;
   }
   function dueBadge(c) {
