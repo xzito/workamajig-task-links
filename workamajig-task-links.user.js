@@ -846,8 +846,8 @@
       .col.collapsed .pill { writing-mode: vertical-rl; transform: rotate(180deg); padding: 12px 4px; }
       .col.collapsed .hrs, .col.collapsed .list { display: none; }
       .list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
-      .empty { color: #aaa; font-size: 12px; text-align: center; padding: 18px 6px; border: 1px dashed #d6d6d6; border-radius: 8px; }
-      .card { min-width: 0; overflow: hidden; display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #e3e3e3; border-left: 4px solid var(--c); border-radius: 8px; padding: 10px 10px 8px; box-shadow: 0 1px 2px rgba(0,0,0,.05); cursor: grab; position: relative; }
+      .empty { flex: none; color: #aaa; font-size: 12px; text-align: center; padding: 18px 6px; border: 1px dashed #d6d6d6; border-radius: 8px; }
+      .card { flex: none; min-width: 0; overflow: hidden; display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #e3e3e3; border-left: 4px solid var(--c); border-radius: 8px; padding: 10px 10px 8px; box-shadow: 0 1px 2px rgba(0,0,0,.05); cursor: grab; position: relative; }
       .card:hover { box-shadow: 0 3px 10px rgba(0,0,0,.10); }
       .card.dragging { opacity: .45; }
       .card.busy { opacity: .6; pointer-events: none; }
