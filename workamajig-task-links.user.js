@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.24.0';
+  const VERSION = '0.25.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1274,6 +1274,14 @@
       .wrap { display: inline-flex; align-items: center; gap: 8px; }
       .hyg { border: 1px solid #cfcfcf; border-radius: 8px; white-space: nowrap; }
       .hyg .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
+      .conv { border: 1px solid #cfcfcf; border-radius: 8px; white-space: nowrap; }
+      .conv .n { color: #185fa5; font-weight: 600; margin-left: 2px; }
+      .conv .u:not(:empty) { margin-left: 6px; font-size: 11px; font-weight: 600; color: #fff; background: #1a8fbf; border-radius: 999px; padding: 1px 6px; }
+      .conv.open { background: #e6f1fb; border-color: #85b7eb; color: #0c447c; }
+      .cvrow { display: flex; align-items: flex-start; }
+      .cvrow .it { flex: 1; min-width: 0; }
+      .ot { flex: none; border: 0; background: none; color: #1a8fbf; font-size: 11px; text-decoration: underline; padding: 6px 14px 0 4px; cursor: pointer; white-space: nowrap; }
+      .ud { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #1a8fbf; vertical-align: middle; }
       .hyg.open { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
       .hmenu { position: fixed; z-index: 10001; width: 380px; max-height: 70vh; overflow: auto; background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 8px 0; font-size: 13px; color: #333; }
       .htitle { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #999; padding: 2px 14px 6px; }
@@ -1294,8 +1302,9 @@
       .onboard { display: block; border: 0; background: none; padding: 4px 14px 2px 34px; color: #1a8fbf; font-size: 12px; text-decoration: underline; cursor: pointer; }
       .hfoot { padding: 8px 14px 2px; font-size: 11px; color: #999; }
       .msg { padding: 10px 14px; color: #888; font-size: 12px; }
-    </style><div class="wrap"><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div>`;
-    r.querySelector('.hyg').addEventListener('click', () => (listHyg.open ? closeListHygiene() : openListHygiene()));
+    </style><div class="wrap"><button type="button" class="conv" title="Tasks that have conversations">Conversations <span class="n">…</span><span class="u"></span> ▾</button><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div>`;
+    r.querySelector('.hyg').addEventListener('click', () => (listHyg.open === 'hyg' ? closeListHygiene() : openListHygiene('hyg')));
+    r.querySelector('.conv').addEventListener('click', () => (listHyg.open === 'conv' ? closeListHygiene() : openListHygiene('conv')));
     // The menu lives in its own layer on <body>: inside the page, an ancestor turns position:fixed into
     // "relative to the page panel", which pushed the menu down and clipped it at the panel's right edge.
     if (board.hygMenu) board.hygMenu.remove();
@@ -1319,13 +1328,33 @@
   // ---------- Hygiene in List view ----------
   // The list grid can't be filtered without touching its markup, so the menu lists the affected tasks instead.
   // Clicking one scrolls to its row and spotlights it; "Show on board" opens the board with that filter on.
-  const listHyg = { open: false, pk: null, model: null, expanded: null, err: '', seq: 0 };
+  // Conversations per task for a whole project: one getConversations call (one row per thread, latest post).
+  // TaskKey -> { threads, unread (threads with unread posts), latest (UTC), latestRk, subject }
+  async function loadProjectConvs(pk) {
+    const res = await call('Modules.Projects.Production', 'getConversations', { Entity: 'tProject', EntityKey: Number(pk) }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+    const map = new Map();
+    ((res.data && res.data.diary) || []).forEach(r => {
+      if (!r.TaskKey) return;
+      const c = map.get(r.TaskKey) || { threads: 0, unread: 0, latest: '', latestRk: 0, subject: '' };
+      c.threads++;
+      if (r.UnreadCount > 0) c.unread++;
+      const when = String(r.SortDate || '');
+      if (when > c.latest) { c.latest = when; c.latestRk = r.RootActivityKey || r.ActivityKey; c.subject = r.Subject || ''; }
+      map.set(r.TaskKey, c);
+    });
+    return map;
+  }
+  const convWord = n => `${n} conversation${n === 1 ? '' : 's'}`;
+
+  const listHyg = { open: false, pk: null, model: null, expanded: null, err: '', seq: 0, convs: null, convErr: '' };
 
   async function loadListHygiene() {
     const pk = qs().get('k'), seq = ++listHyg.seq;
-    if (listHyg.pk !== pk) { listHyg.model = null; listHyg.expanded = null; }
-    listHyg.pk = pk; listHyg.err = '';
+    if (listHyg.pk !== pk) { listHyg.model = null; listHyg.expanded = null; listHyg.convs = null; }
+    listHyg.pk = pk; listHyg.err = ''; listHyg.convErr = '';
     scheduleCache.delete(String(pk));
+    const convP = loadProjectConvs(pk).catch(e => { listHyg.convErr = String(e && e.message || e); return null; });
     try {
       const s = await getSchedule(pk);
       if (seq !== listHyg.seq) return;
@@ -1334,6 +1363,9 @@
       if (seq !== listHyg.seq) return;
       listHyg.err = String(e && e.message || e);
     }
+    const cv = await convP;
+    if (seq !== listHyg.seq) return;
+    if (cv) listHyg.convs = cv;
     renderListHygiene();
   }
 
@@ -1355,14 +1387,20 @@
     const n = r.querySelector('.hyg .n');
     const m = listHyg.model;
     n.textContent = m ? hygieneCounts(m).total : (listHyg.err ? '!' : '…');
-    r.querySelector('.hyg').classList.toggle('open', listHyg.open);
+    const cv = listHyg.convs;
+    const cvUnread = cv ? [...cv.values()].filter(c => c.unread).length : 0;
+    r.querySelector('.conv .n').textContent = cv ? cv.size : (listHyg.convErr ? '!' : '…');
+    r.querySelector('.conv .u').textContent = cvUnread ? `${cvUnread} unread` : '';
+    r.querySelector('.hyg').classList.toggle('open', listHyg.open === 'hyg');
+    r.querySelector('.conv').classList.toggle('open', listHyg.open === 'conv');
     const menu = board.hygMenu && board.hygMenu.shadowRoot.querySelector('.hmenu');
     if (!menu) return;
     menu.hidden = !listHyg.open;
     if (!listHyg.open) return;
-    const b = r.querySelector('.hyg').getBoundingClientRect();
+    const b = r.querySelector(listHyg.open === 'conv' ? '.conv' : '.hyg').getBoundingClientRect();
     menu.style.top = (b.bottom + 6) + 'px';
     menu.style.left = Math.max(8, Math.min(b.left, innerWidth - 388)) + 'px';
+    if (listHyg.open === 'conv') { renderListConvs(menu); return; }
     if (!m) { menu.innerHTML = `<div class="msg">${listHyg.err ? 'Could not load the schedule: ' + esc(listHyg.err) : 'Loading…'}</div>`; return; }
     const per = listHygieneItems(m);
     menu.innerHTML = `<div class="htitle">Open work that has…</div>` + HYGIENE.map(h => {
@@ -1372,8 +1410,22 @@
     }).join('') + `<div class="hfoot">Click a task to jump to its row.</div>`;
   }
 
-  function openListHygiene() {
-    listHyg.open = true;
+  // Tasks with conversations, most recent activity first. Clicking one jumps to its row; "Open latest" opens that thread.
+  function renderListConvs(menu) {
+    const cv = listHyg.convs, m = listHyg.model;
+    if (!cv) { menu.innerHTML = `<div class="msg">${listHyg.convErr ? 'Could not load conversations: ' + esc(listHyg.convErr) : 'Loading…'}</div>`; return; }
+    const tasks = new Map(((m && m.cards) || []).map(c => [c.taskKey, c]).concat(((m && m.unassigned) || []).map(t => [t.taskKey, t])));
+    const rows = [...cv.entries()].sort((a, b) => b[1].latest.localeCompare(a[1].latest));
+    if (!rows.length) { menu.innerHTML = `<div class="htitle">Tasks with conversations</div><div class="msg">No task on this project has a conversation yet.</div>`; return; }
+    menu.innerHTML = `<div class="htitle">Tasks with conversations</div><div class="items" style="background:#fff;border:0">` + rows.map(([tk, c]) => {
+      const t = tasks.get(tk) || {};
+      const meta = [convWord(c.threads), c.unread ? `${c.unread} unread` : '', c.latest ? 'latest ' + fmtWhen(c.latest) : ''].filter(Boolean).join(' · ');
+      return `<div class="cvrow"><button type="button" class="it" data-task="${tk}" title="Scroll to this task in the list"><span class="id">${esc(t.taskId || '')}</span>${esc(t.taskName || c.subject || 'Task')}${c.unread ? ' <span class="ud"></span>' : ''}<small>${esc(meta)}</small></button><button type="button" class="ot" data-rk="${c.latestRk}" title="Open the latest thread: ${esc(c.subject)}">Open latest</button></div>`;
+    }).join('') + `</div><button type="button" class="onboard" data-conv="1">Show these on the board</button><div class="hfoot">Click a task to jump to its row.</div>`;
+  }
+
+  function openListHygiene(mode) {
+    listHyg.open = mode || 'hyg';
     renderListHygiene();
     loadListHygiene();
     setTimeout(() => {
@@ -1397,6 +1449,11 @@
     const t = e.target.closest('button');
     if (!t) return;
     if (t.classList.contains('hrow')) { listHyg.expanded = listHyg.expanded === t.dataset.k ? null : t.dataset.k; renderListHygiene(); return; }
+    if (t.classList.contains('ot')) { closeListHygiene(); openApp('projects.diary.thread', Number(t.dataset.rk)); return; }
+    if (t.classList.contains('onboard') && t.dataset.conv) {
+      board.onlyConv = true; board.user = 0;
+      closeListHygiene(); setBoardPref(true); openBoard(); return;
+    }
     if (t.classList.contains('onboard')) {
       board.hyg = new Set([t.dataset.k]); board.user = 0;
       closeListHygiene(); setBoardPref(true); openBoard(); return;
@@ -1405,7 +1462,7 @@
       const tk = t.dataset.task;
       closeListHygiene();
       const row = findTaskRow(tk);
-      if (!row) { alert('That task is not visible in the list right now. Expand its group, or use "Show these on the board".'); return; }
+      if (!row) { alert('That task is not visible in the list right now (it may be completed and hidden, or inside a collapsed group). Use "Show these on the board" instead.'); return; }
       row.scrollIntoView({ block: 'center' });
       setTimeout(() => spotlight(row), 350);
     }
@@ -1421,6 +1478,7 @@
     const r = board.toggle.shadowRoot;
     // The board has its own Hygiene menu with real filtering.
     r.querySelector('.hyg').hidden = board.on;
+    r.querySelector('.conv').hidden = board.on;
     if (board.on) closeListHygiene();
   }
 
@@ -1540,6 +1598,8 @@
       .b.nd { background: #fff4d6; color: #8a5a00; }
       .b.tdb { background: #e6f1fb; color: #0c447c; }
       .b.tdb.done { background: #eaf3de; color: #3b6d11; }
+      .b.cvb { background: #eeedfe; color: #3c3489; }
+      .b.cvb.unread { background: #534ab7; color: #fff; }
       .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
       .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
       .col { flex: 0 0 280px; width: 280px; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
@@ -1657,7 +1717,7 @@
       const sp = document.createElement('span'); sp.className = 'av'; sp.style.background = '#8a9bab'; sp.textContent = img.dataset.ini || '?';
       img.replaceWith(sp);
     }, true);
-    root.addEventListener('change', e => { if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); return; } if (e.target.classList.contains('onlytd')) { board.onlyTodos = e.target.checked; renderBoard(); } });
+    root.addEventListener('change', e => { if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); return; } if (e.target.classList.contains('onlytd')) { board.onlyTodos = e.target.checked; renderBoard(); return; } if (e.target.classList.contains('onlycv')) { board.onlyConv = e.target.checked; renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
     root.addEventListener('mousedown', onCardMouseDown);
@@ -1676,6 +1736,7 @@
       board.todos = null; board.todosFor = null;
       renderBoard();
       loadTodos();
+      loadBoardConvs();
       } catch (e) {
       board.root.querySelector('.cols').innerHTML = `<div class="msg err">Could not load the schedule: ${esc(e && e.message || e)}</div>`;
     }
@@ -1738,7 +1799,7 @@
     // Toolbar: people chips (open work only), search, show completed, refresh.
     // Chip counts = open assignments that pass the other active filters (description, search), so numbers match the board.
     const q = board.search.trim().toLowerCase();
-    const passes = c => !c.done && hygPass(c, false) && todoPass(c.taskKey) &&
+    const passes = c => !c.done && hygPass(c, false) && todoPass(c.taskKey) && convPass(c.taskKey) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const people = new Map();
     m.cards.filter(c => !c.done).forEach(c => { const k = c.userKey; const p = people.get(k) || { key: k, name: c.user || 'Unassigned', initials: c.initials, n: 0 }; if (passes(c)) p.n++; people.set(k, p); });
@@ -1750,6 +1811,7 @@
     bar.innerHTML = `<div class="chips">${chips.join('')}</div>
       <label class="chk"><input type="checkbox" class="showc" ${showDone() ? 'checked' : ''}> Show completed</label>
       <label class="chk" title="Only tasks that still have unfinished to-dos"><input type="checkbox" class="onlytd" ${board.onlyTodos ? 'checked' : ''}> Has open to-dos</label>
+      <label class="chk" title="Only tasks that have at least one conversation"><input type="checkbox" class="onlycv" ${board.onlyConv ? 'checked' : ''}> Has conversations</label>
       <button type="button" class="icon collapse-all" title="Collapse every column">Collapse all</button>
       <button type="button" class="icon expand-all" title="Expand every column">Expand all</button>
       ${(() => { const hc = hygieneCounts(m); board.hygCounts = hc; return `<span class="hwrap"><button type="button" class="icon hyg ${board.hyg.size ? 'on' : ''}" title="Project hygiene: find open work with problems">Hygiene <span class="n">${hc.total}</span> ▾</button>${board.hygOpen ? `<div class="hmenu">
@@ -1763,6 +1825,7 @@
         if (board.hyg.size) parts.push(HYGIENE.filter(h => board.hyg.has(h.key)).map(h => h.label.toLowerCase()).join(' or '));
         if (q) parts.push('matching “' + esc(board.search.trim()) + '”');
         if (board.onlyTodos) parts.push('tasks with open to-dos');
+        if (board.onlyConv) parts.push('tasks with conversations');
         return parts.length ? `<div class="fsum">Filtered: showing ${parts.join(' · ')} <button type="button" class="mlink fclear">Clear filters</button></div>` : '';
       })()}`;
     board.model = m;
@@ -1773,7 +1836,7 @@
   function renderColumns() {
     const m = board.model; if (!m) return;
     const q = board.search.trim().toLowerCase();
-    const match = c => (!board.user || c.userKey === board.user) && (!board.hyg.size || (!c.done && hygPass(c, false))) && todoPass(c.taskKey) &&
+    const match = c => (!board.user || c.userKey === board.user) && (!board.hyg.size || (!c.done && hygPass(c, false))) && todoPass(c.taskKey) && convPass(c.taskKey) &&
       (!q || [c.taskId, c.taskName, c.group, c.user, c.service].some(v => String(v || '').toLowerCase().includes(q)));
     const sortCards = (a, b) => ((a.days == null) - (b.days == null)) || ((a.days ?? 0) - (b.days ?? 0)) || (a.order - b.order);
     const cols = [];
@@ -1785,7 +1848,7 @@
       cols.push({ key: st.key, name: st.name, color: st.color, cards, drop: true });
     });
     if (!board.user) {
-      const un = m.unassigned.filter(t => hygPass(t, true) && todoPass(t.taskKey)).filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
+      const un = m.unassigned.filter(t => hygPass(t, true) && todoPass(t.taskKey) && convPass(t.taskKey)).filter(t => !q || [t.taskId, t.taskName, t.group].some(v => String(v).toLowerCase().includes(q)));
       if (un.length) cols.push({ key: -2, name: 'Not assigned', color: '#9b9b9b', cards: un, drop: false, unassigned: true });
     }
     cols.forEach(col => { col.collapsed = isCollapsed(col.name); });
@@ -1821,7 +1884,7 @@
       <div class="top"><span class="id">${esc(c.taskId)}</span><span class="grp">${esc(c.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(c.taskName)}</div>
-      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}${todoBadge(c.taskKey)}${c.noDesc && !c.done ? '<span class="b nd">No description</span>' : ''}${!c.done && board.hyg.has('overbudget') && c.planned > 0 && c.actual > c.planned ? '<span class="b ob">Over budget</span>' : ''}${!c.done && board.hyg.has('nohours') && !(c.planned > 0) ? '<span class="b nh">No hours planned</span>' : ''}</div>
+      <div class="badges">${dueBadge(c)}${c.pc ? `<span class="b">${c.pc}%</span>` : ''}${todoBadge(c.taskKey)}${convBadge(c.taskKey)}${c.noDesc && !c.done ? '<span class="b nd">No description</span>' : ''}${!c.done && board.hyg.has('overbudget') && c.planned > 0 && c.actual > c.planned ? '<span class="b ob">Over budget</span>' : ''}${!c.done && board.hyg.has('nohours') && !(c.planned > 0) ? '<span class="b nh">No hours planned</span>' : ''}</div>
       ${c.pc ? `<div class="prog"><i style="width:${Math.min(100, c.pc)}%"></i></div>` : ''}
       <div class="foot">${avatarHtml(c.userKey, c.user, c.initials)}<span class="who">${esc(c.user || 'Unassigned slot')}<small>${esc(c.service)}</small></span>
       <span class="h ${overHrs ? 'over' : ''}" title="Logged / planned hours">${fmtH(c.actual)} / ${fmtH(c.planned)}</span></div></a>`;
@@ -1832,7 +1895,7 @@
       <div class="top"><span class="id">${esc(t.taskId)}</span><span class="grp">${esc(t.group)}</span></div>
       <button type="button" class="more" title="More">⋯</button>
       <div class="name">${esc(t.taskName)}</div>
-      <div class="badges">${label ? `<span class="b">Due ${label}</span>` : ''}<span class="b">No assignee</span>${todoBadge(t.taskKey)}${t.noDesc ? '<span class="b nd">No description</span>' : ''}</div></div>`;
+      <div class="badges">${label ? `<span class="b">Due ${label}</span>` : ''}<span class="b">No assignee</span>${todoBadge(t.taskKey)}${convBadge(t.taskKey)}${t.noDesc ? '<span class="b nd">No description</span>' : ''}</div></div>`;
   }
 
   function onBoardClick(e) {
@@ -1842,7 +1905,7 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
-    if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.onlyTodos = false; board.search = ''; clearNativeSearch(); board.hygOpen = false; renderBoard(); return; }
+    if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.onlyTodos = false; board.onlyConv = false; board.search = ''; clearNativeSearch(); board.hygOpen = false; renderBoard(); return; }
     if (t.closest && t.closest('.hyg')) { board.hygOpen = !board.hygOpen; renderBoard(); return; }
     if (t.classList.contains('hall')) { HYGIENE.forEach(h => board.hyg.add(h.key)); renderBoard(); return; }
     if (t.classList.contains('hnone')) { board.hyg.clear(); renderBoard(); return; }
@@ -1944,6 +2007,19 @@
     renderBoard();
     if (board.modal) renderModal();
   }
+  async function loadBoardConvs() {
+    const pk = board.projectKey;
+    try { const map = await loadProjectConvs(pk); if (board.projectKey === pk) { board.convs = map; board.convsFor = pk; renderBoard(); } }
+    catch (e) { console.warn('[wjl] conversations', e); }
+  }
+  const boardConvs = () => (board.convs && board.convsFor === board.projectKey ? board.convs : null);
+  const convPass = taskKey => { if (!board.onlyConv) return true; const m = boardConvs(); return !!(m && m.get(taskKey)); };
+  function convBadge(taskKey) {
+    const m = boardConvs(); const c = m && m.get(taskKey);
+    if (!c) return '';
+    return `<span class="b cvb ${c.unread ? 'unread' : ''}" title="${esc(convWord(c.threads))}${c.unread ? `, ${c.unread} with unread posts` : ''}. Latest: ${esc(c.subject)}">${convWord(c.threads)}${c.unread ? ` · ${c.unread} unread` : ''}</span>`;
+  }
+
   // TaskKey -> { open, total } from the project's to-do list (null until loaded).
   function todoStats() {
     if (!board.todos || board.todosFor !== board.projectKey) return null;
