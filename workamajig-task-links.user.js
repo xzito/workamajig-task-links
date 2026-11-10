@@ -2567,7 +2567,7 @@
       button.more { font: inherit; font-size: 12px; background: none; border: 0; color: #1a73a8; cursor: pointer; padding: 6px 10px; }
       .chev { font-size: 11px; color: #999; }
     </style>`;
-    if (!ts.text && !ts.loading) { root.innerHTML = ''; host.style.display = 'none'; return; }
+    if (!ts.text && !ts.loading) { root.innerHTML = ''; host.style.display = 'none'; pg.classList.remove('wjl-hastasks'); return; }
     host.style.display = '';
     let body = '';
     let count = '';
@@ -2592,6 +2592,14 @@
       if (other.length) body += ts.showOther ? `<div class="note">Tasks in matching projects or assigned to matching people:</div><ul>${other.slice(0, 100).map(item).join('')}</ul>${other.length > 100 ? `<div class="note">Showing 100 of ${other.length}.</div>` : ''}`
         : `<button class="more" data-act="other">${other.length} more in matching projects or people</button>`;
       body += `<div class="note">Active projects only.</div>`;
+    }
+    // Workamajig's "Sorry, we were not able to find anything" note is for its own categories; hide it while tasks match.
+    const hasHits = !!(ts.rows && !ts.loading && taskSearchGroups().direct.length);
+    pg.classList.toggle('wjl-hastasks', hasHits);
+    if (!document.getElementById('wjl-tsearch-style')) {
+      const st = document.createElement('style'); st.id = 'wjl-tsearch-style';
+      st.textContent = 'page[data-aid="common.search"].wjl-hastasks tab#search > div.flex-none.bound { display: none !important; }';
+      document.head.appendChild(st);
     }
     const collapsed = ts.collapsed;
     root.innerHTML = `${css}<div class="sec"><h2 data-act="toggle">Tasks${count !== '' ? `<span class="badge">${count}</span>` : ''}<span class="chev">${collapsed ? '▸' : '▾'}</span></h2>${collapsed ? '' : body}</div>`;
