@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Workamajig Task Links
 // @namespace    https://xzito.com/
-// @version      0.17.0
+// @version      0.31.0
 // @description  Hover a task row anywhere in Workamajig Platinum (project Schedule, My Tasks, My Time) to copy a task deep link, the project link, or the assignment URL for each assignee slot. Also widens the Assignment page, shows hours logged vs planned, and flags a missing task description (with an inline editor for users who can edit tasks).
 // @match        https://app20.workamajig.com/platinum/*
 // @grant        none
@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.30.0';
+  const VERSION = '0.31.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -270,7 +270,7 @@
     if (!ordered.length) item('<i>No assignment slots on this task</i>', 'add an assignment to get an assignment URL');
     ordered.forEach(s => item(`Copy assignment link · ${s.user}`, s.status, () => copy(urls.assignment(s.taskUserKey), 'assignment link for ' + s.user)));
     if (ordered.length > 1) item('Copy all assignment links', 'one per line, with names', () =>
-      copy(ordered.map(s => `${taskLabel} — ${s.user}: ${urls.assignment(s.taskUserKey)}`).join('\n'), 'all links'));
+      copy(ordered.map(s => `${taskLabel} — ${s.user}: ${urls.assignment(s.taskUserKey)}`).join('\n'), 'all links'));    ordered.forEach(s => item(`Open assignment in new tab · ${s.user}`, s.status, () => window.open(urls.assignment(s.taskUserKey), '_blank', 'noopener')));
   }
 
   // ---------- deep link: #task=<TaskKey> on the schedule page ----------
@@ -395,10 +395,10 @@
       setTimeout(() => { if (dlg && dlg.offsetParent) document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); }, 50);
     };
     const note = text => { const d = document.createElement('div'); d.style.cssText = 'font-size:11px;color:#999;padding:2px 0 6px 28px'; d.textContent = text; group.appendChild(d); return d; };
-    const add = (label, title, onClick) => {
+    const add = (label, title, onClick, icon) => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = baseCls + ' i-link';
+      b.className = baseCls + ' ' + (icon || 'i-link');
       b.setAttribute('data-action', 'none');
       b.textContent = label;
       if (title) b.title = title;
@@ -424,6 +424,8 @@
     ordered.forEach(sl => add(`Copy assignment link · ${sl.user.split(' ')[0]}`, `${sl.user}${sl.status ? ' · ' + sl.status : ''}`, () => copy(urls.assignment(sl.taskUserKey), 'assignment link for ' + sl.user)));
     if (ordered.length > 1) add('Copy all assignment links', 'One per line, with names', () =>
       copy(ordered.map(sl => `${t ? t.id + ' - ' + t.name : 'Task'} — ${sl.user}: ${urls.assignment(sl.taskUserKey)}`).join('\n'), 'all links'));
+    ordered.forEach(sl => add(`Open assignment in new tab · ${sl.user.split(' ')[0]}`, `${sl.user}${sl.status ? ' · ' + sl.status : ''}`,
+      () => window.open(urls.assignment(sl.taskUserKey), '_blank', 'noopener'), 'i-newtab'));
     if (!ordered.length) note('No assignments on this task');
   }
 
@@ -1802,9 +1804,6 @@
       .mfoot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 22px; border-top: 1px solid #eee; background: #fafafa; border-radius: 0 0 12px 12px; }
       .mbtn { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; border: 1px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; line-height: 1.2; }
       .mbtn .ic { width: 14px; height: 14px; flex: none; }
-      .msplit { display: inline-flex; }
-      .msplit .mopen { border-radius: 8px 0 0 8px; }
-      .msplit .mnewtab { border-radius: 0 8px 8px 0; border-left: 1px solid rgba(255,255,255,.45); padding: 8px 10px; }
       .mbtn:hover { background: #f3f3f3; }
       .mbtn.primary { background: #7ab51d; border-color: #7ab51d; color: #fff; font-weight: 600; }
       .mbtn.primary:hover { background: #6a9f18; }
@@ -2102,7 +2101,7 @@
         <div class="mconvslot"></div>
       </div>${todoHtml}</div>
       <div class="mfoot">
-        ${tu ? `<span class="msplit"><button type="button" class="mbtn primary mopen">Open full assignment</button><a class="mbtn primary mnewtab" href="${urls.assignment(tu.TaskUserKey)}" target="_blank" rel="noopener" title="Open the assignment in a new tab" aria-label="Open the assignment in a new tab"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M12 9.5v3a1 1 0 01-1 1H3.5a1 1 0 01-1-1V5a1 1 0 011-1h3"/></svg></a></span>` : ''}
+        ${tu ? `<a class="mbtn primary mopen" href="${urls.assignment(tu.TaskUserKey)}" target="_blank" rel="noopener" title="Opens the assignment in a new tab">Open full assignment<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M12 9.5v3a1 1 0 01-1 1H3.5a1 1 0 01-1-1V5a1 1 0 011-1h3"/></svg></a>` : ''}
         ${canEdit ? `<button type="button" class="mbtn ${tu ? '' : 'primary'} massign">${tu ? 'Manage assignees' : 'Assign people'}</button>` : ''}
         <button type="button" class="mbtn mlist">Show in list</button>
         <span class="spacer"></span>
@@ -2246,7 +2245,6 @@
     if (t.closest('a[href]')) return; // links in the description
     const tu = ref.tuk ? (board.data.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
     const task = (board.data.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
-    if (t.classList.contains('mopen')) { closeModal(); openApp(ASSIGN_AID, ref.tuk); return; }
     if (t.classList.contains('mlist')) { closeModal(); showInList(ref.taskKey); return; }
     if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
@@ -2441,6 +2439,185 @@
     loop();
   }
 
+  // ---------- Tasks in Global Search (v0.31) ----------
+  // Workamajig's Global Search (common.search) has no task category. The Assignments views (Search > Views >
+  // Assignments) do have a server-side search over Project Number/Name, Task ID, Task Name and Assigned User Name
+  // for active projects: ReportingManager.runListing with searchText. We load any one Assignments view's definition,
+  // drop its conditions and groups, and run it with the Global Search text. Read-only; nothing is saved.
+  const TS_SS = 'wjl.taskSearch';
+  const ts = { def: null, defP: null, seq: 0, text: '', rows: null, err: '', loading: false, showMore: false, showOther: false, showDone: false, wired: new WeakSet() };
+  function taskSearchDef() {
+    if (ts.def) return Promise.resolve(ts.def);
+    if (!ts.defP) ts.defP = (async () => {
+      const RM = 'WJ.Reports.Framework.Platinum.ReportingManager';
+      const v = await call(RM, 'getViews', { reportID: 'AssignmentTrafficList' });
+      const views = (v.views || []).filter(x => x && x.reportKey);
+      if (!views.length) throw new Error('No Assignments view is available to search with.');
+      const d = await call(RM, 'loadReport', { reportKey: (views.find(x => +x.reportType === 1) || views[0]).reportKey });
+      if (!d || !d.view) throw new Error('Could not load the Assignments view.');
+      const def = JSON.parse(JSON.stringify(d));
+      def.conditions = { nodeName: 'conditions', children: [] };
+      def.groups = { nodeName: 'groups', children: [] };
+      def.run = ''; def.rows = [];
+      ts.def = def; return def;
+    })().catch(e => { ts.defP = null; throw e; });
+    return ts.defP;
+  }
+  async function runTaskSearch(text) {
+    text = String(text || '').trim();
+    const seq = ++ts.seq;
+    ts.text = text; ts.err = ''; ts.showMore = ts.showOther = ts.showDone = false;
+    if (text.length < 2) { ts.rows = null; ts.loading = false; renderTaskSearch(); return; }
+    ts.loading = true; ts.rows = null; renderTaskSearch();
+    try {
+      const def = await taskSearchDef();
+      const r = await call('WJ.Reports.Framework.Platinum.ReportingManager', 'runListing',
+        { report: def, restrictOptions: { searchText: text }, dynamicOptions: {}, searchText: text, ExportType: 0, AutoPrint: false }, true);
+      if (seq !== ts.seq) return;
+      if (r.errors && r.errors.length) throw new Error(r.errors.map(x => x.message).join('; '));
+      ts.rows = (r.data && r.data.rows) || [];
+      try { sessionStorage.setItem(TS_SS, JSON.stringify({ text, rows: ts.rows })); } catch (e) {}
+    } catch (e) {
+      if (seq !== ts.seq) return;
+      ts.err = (e && e.message) || String(e); ts.rows = null;
+    }
+    ts.loading = false; renderTaskSearch();
+  }
+  // Assignment rows -> one entry per task, ranked: task name / ID matches first, then project / assignee-only matches.
+  function taskSearchGroups() {
+    const q = ts.text.toLowerCase();
+    const map = new Map();
+    for (const r of ts.rows || []) {
+      if (!r.TaskKey) continue;
+      let t = map.get(r.TaskKey);
+      if (!t) map.set(r.TaskKey, t = { taskKey: r.TaskKey, projectKey: r.ProjectKey, id: String(r.TaskID || '').trim(), name: String(r.TaskName || '').trim(),
+        project: String(r.ProjectFullName || '').trim(), parent: String(r.SummaryTask || '').trim(), due: r.PlanComplete, asg: [] });
+      const pct = +r.Assignment_Percentage_Complete || +r.PercComp || 0;
+      t.asg.push({ tuk: r.TaskUserKeyPK, name: String(r.UserName || r.Assigned_Staff || '').trim(), status: String(r.Assignment_Status || '').trim(), pct });
+    }
+    const out = [...map.values()];
+    for (const t of out) {
+      t.done = t.asg.length > 0 && t.asg.every(a => a.pct >= 100 || /^complete/i.test(a.status));
+      const n = t.name.toLowerCase();
+      t.rank = n === q ? 0 : n.startsWith(q) ? 1 : n.includes(q) ? 2 : t.id.toLowerCase() === q ? 2 : 9;
+    }
+    out.sort((a, b) => a.rank - b.rank || (a.done - b.done) || String(b.due || '').localeCompare(String(a.due || '')) || a.name.localeCompare(b.name));
+    return { direct: out.filter(t => t.rank < 9), other: out.filter(t => t.rank === 9) };
+  }
+  function searchPage() {
+    const ps = [...document.querySelectorAll('page[data-aid="common.search"]')];
+    return ps[ps.length - 1] || null;
+  }
+  function closeSearchPage(pg) {
+    const x = pg && pg.querySelector('button.i-close');
+    if (x) x.click();
+  }
+  function searchTick() {
+    const pg = searchPage();
+    if (!pg) return;
+    const tab = pg.querySelector('tab#search');
+    const lst = tab && tab.querySelector('#lstResults');
+    const inp = tab && tab.querySelector('input[name="searchText"]');
+    if (!lst || !inp) return;
+    if (!ts.wired.has(pg)) {
+      ts.wired.add(pg);
+      const go = () => setTimeout(() => runTaskSearch(inp.value), 0);
+      tab.addEventListener('click', e => { if (e.target.closest && e.target.closest('button[data-action="save"]')) go(); }, true);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }, true);
+      // Native search restores its last results when reopened; restore ours to match.
+      let last = null; try { last = JSON.parse(sessionStorage.getItem(TS_SS) || 'null'); } catch (e) {}
+      if (last && last.text && (!inp.value || inp.value.trim() === last.text)) { ts.text = last.text; ts.rows = last.rows; ts.err = ''; ts.loading = false; }
+      else if (inp.value.trim().length >= 2) runTaskSearch(inp.value);
+    }
+    let host = lst.parentElement.querySelector(':scope > #wjl-tsearch');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'wjl-tsearch';
+      host.attachShadow({ mode: 'open' });
+      host.shadowRoot.addEventListener('click', onTaskSearchClick);
+      lst.parentElement.insertBefore(host, lst);
+      renderTaskSearch();
+    }
+  }
+  function renderTaskSearch() {
+    const pg = searchPage();
+    const host = pg && pg.querySelector('#wjl-tsearch');
+    if (!host) return;
+    const root = host.shadowRoot;
+    const css = `<style>
+      :host { display: block; font-family: LexendDeca, "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif; color: #333; }
+      .sec { margin: 8px 0 14px; }
+      h2 { font-size: 18px; font-weight: 600; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; color: #222; cursor: pointer; user-select: none; }
+      .badge { font-size: 12px; font-weight: 600; background: #eee; border-radius: 10px; padding: 1px 8px; color: #555; }
+      .note { font-size: 12px; color: #888; padding: 2px 10px 8px; }
+      .err { color: #b00020; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; border-radius: 4px; }
+      li:hover { background: #f6f6f6; }
+      li.done { opacity: .6; }
+      a.t { color: #222; text-decoration: none; font-size: 13px; display: block; cursor: pointer; }
+      a.t:hover .nm { text-decoration: underline; }
+      .id { color: #888; margin-right: 4px; }
+      .sub { font-size: 12px; color: #777; margin-top: 2px; }
+      .who { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+      a.chip { font-size: 11px; border: 1px solid #ddd; border-radius: 10px; padding: 1px 8px; color: #444; text-decoration: none; background: #fff; }
+      a.chip:hover { border-color: #999; }
+      a.chip.none { color: #999; border-style: dashed; }
+      .st { color: #888; }
+      button.more { font: inherit; font-size: 12px; background: none; border: 0; color: #1a73a8; cursor: pointer; padding: 6px 10px; }
+      .chev { font-size: 11px; color: #999; }
+    </style>`;
+    if (!ts.text && !ts.loading) { root.innerHTML = ''; host.style.display = 'none'; return; }
+    host.style.display = '';
+    let body = '';
+    let count = '';
+    if (ts.loading) body = `<div class="note">Searching tasks…</div>`;
+    else if (ts.err) body = `<div class="note err">Task search failed: ${esc(ts.err)}</div>`;
+    else if (ts.text.length < 2) body = `<div class="note">Type at least 2 characters to search tasks.</div>`;
+    else if (ts.rows) {
+      const { direct, other } = taskSearchGroups();
+      const open = direct.filter(t => !t.done), done = direct.filter(t => t.done);
+      count = direct.length;
+      const LIMIT = 15;
+      const shown = ts.showMore ? open : open.slice(0, LIMIT);
+      const item = t => {
+        const who = t.asg.map(a => `<a class="chip${a.name ? '' : ' none'}" data-tuk="${esc(a.tuk)}" href="${urls.assignment(a.tuk)}" title="Open this assignment">${esc(a.name || 'Not assigned')}${a.status ? ` <span class="st">· ${esc(a.status)}</span>` : ''}</a>`).join('');
+        return `<li class="${t.done ? 'done' : ''}"><a class="t" data-pk="${esc(t.projectKey)}" data-tk="${esc(t.taskKey)}" href="${urls.task(t.projectKey, t.taskKey)}" title="Open in the project schedule"><span class="id">${esc(t.id)}</span><span class="nm">${esc(t.name)}</span></a>
+          <div class="sub">${esc(t.project)}${t.parent ? ' / ' + esc(t.parent) : ''}</div>${who ? `<div class="who">${who}</div>` : ''}</li>`;
+      };
+      body = `<ul>${shown.map(item).join('')}</ul>`;
+      if (open.length > LIMIT && !ts.showMore) body += `<button class="more" data-act="more">Show all ${open.length} open tasks</button>`;
+      if (done.length) body += ts.showDone ? `<ul>${done.map(item).join('')}</ul>` : `<button class="more" data-act="done">Show ${done.length} completed</button>`;
+      if (!direct.length) body += `<div class="note">No task names match “${esc(ts.text)}”.</div>`;
+      if (other.length) body += ts.showOther ? `<div class="note">Tasks in matching projects or assigned to matching people:</div><ul>${other.slice(0, 100).map(item).join('')}</ul>${other.length > 100 ? `<div class="note">Showing 100 of ${other.length}.</div>` : ''}`
+        : `<button class="more" data-act="other">${other.length} more in matching projects or people</button>`;
+      body += `<div class="note">Active projects only.</div>`;
+    }
+    const collapsed = ts.collapsed;
+    root.innerHTML = `${css}<div class="sec"><h2 data-act="toggle">Tasks${count !== '' ? `<span class="badge">${count}</span>` : ''}<span class="chev">${collapsed ? '▸' : '▾'}</span></h2>${collapsed ? '' : body}</div>`;
+  }
+  function onTaskSearchClick(e) {
+    const t = e.target.closest('[data-act], a');
+    if (!t) return;
+    const act = t.dataset.act;
+    if (act) {
+      if (act === 'toggle') ts.collapsed = !ts.collapsed;
+      if (act === 'more') ts.showMore = true;
+      if (act === 'done') ts.showDone = true;
+      if (act === 'other') ts.showOther = true;
+      renderTaskSearch(); return;
+    }
+    if (!plainClick(e)) return; // Cmd/Ctrl-click: let the link open a new tab
+    e.preventDefault();
+    const pg = searchPage();
+    if (t.dataset.tuk) { closeSearchPage(pg); openApp(ASSIGN_AID, t.dataset.tuk); return; }
+    if (t.dataset.tk) {
+      try { sessionStorage.setItem(SS_KEY, String(t.dataset.tk)); } catch (err) {}
+      closeSearchPage(pg); openApp('projects.schedule.edit2', t.dataset.pk);
+      setTimeout(handlePendingTask, 800);
+    }
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -2454,6 +2631,7 @@
     assignmentPage();
     boardTick();
     panelDimTick();
+    searchTick();
   }
   function start() {
     document.addEventListener('mouseover', onOver, true);
