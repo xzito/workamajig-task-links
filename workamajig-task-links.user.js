@@ -280,7 +280,9 @@
   // Ends on the user's own input (wheel, click, key, touch) or after 5 s; programmatic scrolls don't end it.
   // The visible schedule row for a TaskKey (the page also has hidden template/gantt grids that reuse grid-row markup).
   function findTaskRow(tk) {
-    const all = [...document.querySelectorAll(`grid-row.datarow[data-key="${tk}"]`)];
+    // Only the topmost open Schedule page: an older copy may sit underneath while a new one loads on top.
+    const pg = schedulePage();
+    const all = [...(pg || document).querySelectorAll(`grid-row.datarow[data-key="${tk}"]`)];
     const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     return all.find(el => el.closest('#grdProjectSchedule') && vis(el)) || all.find(vis) || null;
   }
@@ -2621,8 +2623,13 @@
     if (t.dataset.tuk) { closeSearchPage(pg); openApp(ASSIGN_AID, t.dataset.tuk); return; }
     if (t.dataset.tk) {
       try { sessionStorage.setItem(SS_KEY, String(t.dataset.tk)); } catch (err) {}
-      closeSearchPage(pg); openApp('projects.schedule.edit2', t.dataset.pk);
-      setTimeout(handlePendingTask, 800);
+      // If that project's schedule is already the page under Search, just close Search and spotlight the row.
+      const open = [...document.querySelectorAll('#desktop > section > page.open')].filter(x => x !== pg);
+      const under = open[open.length - 1];
+      const same = under && under.getAttribute('data-aid') === 'projects.schedule.edit2' && under.view && under.view.action && String(under.view.action.k) === String(t.dataset.pk);
+      closeSearchPage(pg);
+      if (!same) openApp('projects.schedule.edit2', t.dataset.pk);
+      setTimeout(handlePendingTask, same ? 300 : 800);
     }
   }
 
