@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.39.0';
+  const VERSION = '0.40.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -2369,8 +2369,10 @@
   }
 
   // ---- card details modal ----
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && board.modal && board.on) { e.stopPropagation(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); } }, true);
-  function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; board.host.style.zIndex = '40'; renderModal(); }
+  // Swallow Escape at the window (capture) while a board/calendar modal is open, so Workamajig's own close-page
+  // handler never sees it and only the modal closes.
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && board.on && board.modal) { e.stopImmediatePropagation(); e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); } }, true);
+  function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; board.host.style.zIndex = '40'; renderModal(); const x = board.root && board.root.querySelector('.mx'); if (x) x.focus(); }
   function closeModal() { board.modal = null; if (board.host) board.host.style.zIndex = '10'; const bg = board.root && board.root.querySelector('.mbg'); if (bg) bg.remove(); }
   const linkify = txt => esc(txt).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
   const fmtDate = d => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—';
