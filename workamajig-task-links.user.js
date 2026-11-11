@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.34.0';
+  const VERSION = '0.35.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1148,14 +1148,63 @@
           ${hidden ? `<div class="earlier"><button type="button" class="link moreb" data-rk="${t.rk}">Show ${hidden} earlier repl${hidden > 1 ? 'ies' : 'y'}</button></div>` : ''}
           ${items.slice(1).map(msgHtml).join('')}
           <div class="reply"><textarea rows="1" data-root="${t.rk}" placeholder="Write a reply"></textarea><button type="button" class="btn rbtn" data-rk="${t.rk}">Reply</button></div>
-          <div class="hint">Opens Workamajig's reply screen with your text and the usual recipients; press Post Reply there.</div></div>`;
+          <div class="hint">Type @ to mention a teammate (they're added to the recipients). Opens Workamajig's reply screen with your text; press Post Reply there.</div></div>`;
       }).join('');
       root.querySelectorAll('textarea[data-root]').forEach(t => { t.value = st.drafts[t.dataset.root] || ''; });
     };
 
     root.addEventListener('error', e => { if (e.target.tagName === 'IMG' && e.target.parentElement && e.target.parentElement.classList.contains('av')) e.target.remove(); }, true);
+    // @mentions: type @ in a reply to pick a teammate. The person is recorded for this thread and added to the reply's
+    // recipients on the reply screen, so an @mention actually pings them — Workamajig has no native way to do that.
+    let mUsers = [];
+    getSchedule(a.projectKey).then(s => { mUsers = (s.users || []).filter(u => !u.ClientVendorLogin && (u.UserName || '').trim()); }).catch(() => {});
+    const mMentions = new Map(); // rk -> Map(userKey -> userName)
+    const mState = { ta: null, items: [], idx: 0, start: -1 };
+    const mMenu = document.createElement('div');
+    mMenu.className = 'mmenu';
+    mMenu.style.cssText = 'position:fixed;z-index:60;min-width:200px;max-width:300px;background:#fff;border:1px solid #d8d8d8;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.16);max-height:220px;overflow:auto;display:none;';
+    root.appendChild(mMenu);
+    const mClose = () => { mMenu.style.display = 'none'; mState.ta = null; mState.items = []; mState.start = -1; };
+    const mRender = () => {
+      if (!mState.items.length) { mClose(); return; }
+      mMenu.innerHTML = mState.items.map((u, i) => `<div class="mrow" data-i="${i}" style="padding:7px 11px;cursor:pointer;font-size:13px;color:#333;${i === mState.idx ? 'background:#eef2fb;' : ''}">${esc(u.UserName)}</div>`).join('');
+      mMenu.style.display = 'block';
+    };
+    const mScan = (ta) => {
+      const v = ta.value, pos = ta.selectionStart;
+      const m = /(^|[\s(])@([\w .'\-]{0,30})$/.exec(v.slice(0, pos));
+      if (!m || !mUsers.length) { mClose(); return; }
+      const q = m[2].toLowerCase();
+      mState.ta = ta; mState.start = pos - m[2].length - 1; mState.idx = 0;
+      mState.items = mUsers.filter(u => u.UserName.toLowerCase().includes(q)).slice(0, 8);
+      if (!mState.items.length) { mClose(); return; }
+      const r = ta.getBoundingClientRect();
+      mMenu.style.left = Math.round(r.left) + 'px';
+      mMenu.style.top = Math.round(Math.min(r.bottom + 4, innerHeight - 230)) + 'px';
+      mRender();
+    };
+    const mPick = (u) => {
+      const ta = mState.ta; if (!ta || !u) return;
+      const v = ta.value, pos = ta.selectionStart, ins = '@' + u.UserName + ' ';
+      ta.value = v.slice(0, mState.start) + ins + v.slice(pos);
+      const np = mState.start + ins.length; ta.setSelectionRange(np, np);
+      const rk = ta.dataset.root;
+      if (rk) { if (!mMentions.has(rk)) mMentions.set(rk, new Map()); mMentions.get(rk).set(String(u.UserKey), u.UserName); }
+      mClose(); ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, 240) + 'px'; ta.focus();
+    };
+    mMenu.addEventListener('click', e => { const r = e.target.closest('.mrow'); if (r) mPick(mState.items[+r.dataset.i]); });
+    root.addEventListener('keydown', e => {
+      if (mMenu.style.display !== 'block' || !mState.items.length) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); mState.idx = (mState.idx + 1) % mState.items.length; mRender(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); mState.idx = (mState.idx - 1 + mState.items.length) % mState.items.length; mRender(); }
+      else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); mPick(mState.items[mState.idx]); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mClose(); }
+    }, true);
     root.addEventListener('input', e => {
-      if (e.target.tagName === 'TEXTAREA') { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 240) + 'px'; }
+      if (e.target.tagName === 'TEXTAREA') {
+        const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 240) + 'px';
+        if (t.dataset.root) mScan(t);
+      }
     });
     root.addEventListener('click', e => {
       const t = e.target;
@@ -1168,7 +1217,8 @@
         const rk = Number(t.dataset.rk);
         const ta = root.querySelector(`textarea[data-root="${rk}"]`);
         const text = (ta && ta.value || '').trim();
-        if (text) { try { sessionStorage.setItem(SS_REPLY, JSON.stringify({ parent: rk, text, ts: Date.now() })); } catch (err) {} }
+        const mentions = [...(mMentions.get(String(rk)) || new Map()).entries()].map(([k, name]) => ({ UserKey: Number(k), UserName: name }));
+        if (text) { try { sessionStorage.setItem(SS_REPLY, JSON.stringify({ parent: rk, text, mentions, ts: Date.now() })); } catch (err) {} }
         st.drafts[rk] = '';
         nav('projects.diary.reply', rk);
       }
@@ -1203,7 +1253,20 @@
         if (!ed.textContent.trim() && ++attempts < 8) { setTimeout(put, 300); return; }
         if (!ed.textContent.trim()) { ed.innerHTML = body; ed.dispatchEvent(new Event('input', { bubbles: true })); }
         try { model.reply.setValue('Notes', '<span class="usr ver2">' + ed.innerHTML + '</span>'); } catch (e) {}
-        toast('Reply prefilled. Check the recipients, then Post Reply');
+        // @mentioned people → reply recipients, so the mention actually notifies them.
+        let added = 0;
+        if (req.mentions && req.mentions.length && model.emailTo && typeof model.emailTo.addItem === 'function') {
+          try {
+            const have = new Set((model.emailTo.source || []).map(r => String(r.UserKey)));
+            req.mentions.forEach(u => {
+              if (!u || !u.UserKey || have.has(String(u.UserKey))) return;
+              model.emailTo.addItem({ UserKey: u.UserKey, UserName: u.UserName, Email: '', ClientVendorLogin: 0, k: u.UserKey, l: u.UserName, label: u.UserName, key: u.UserKey, title: '' });
+              have.add(String(u.UserKey)); added++;
+            });
+            if (added) model.emailTo.fire();
+          } catch (e) { console.warn('[wjl] add mention recipients failed', e); }
+        }
+        toast(added ? `Reply prefilled; ${added} mentioned ${added > 1 ? 'people' : 'person'} added to recipients. Review and Post Reply.` : 'Reply prefilled. Check the recipients, then Post Reply');
       };
       setTimeout(put, 150);
     }, 250);
