@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.35.0';
+  const VERSION = '0.36.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -751,6 +751,43 @@
     if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
     scheduleCache.delete(String(projectKey));
     return true;
+  }
+
+  // Set a task's due date the same way saveTaskDescription writes a description: a fresh task row from getSchedule with
+  // only the dates changed, in the schedule's save envelope. Keeps Plan Start fixed and sets Plan Complete to the chosen
+  // date (recomputing the working-day duration) — like editing Plan Complete in Workamajig's own task panel. If the new
+  // date is before the start, the start moves with it.
+  async function saveTaskDueDate(projectKey, taskKey, newYmd) {
+    projectKey = Number(projectKey); taskKey = Number(taskKey);
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
+      projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
+      application: 'wjl saveDueDate', performRecalc: false, fromNotification: false, origData: null
+    });
+    const row = (sched.tasks || []).find(t => t.TaskKey === taskKey);
+    if (!row) throw new Error('task not found in the schedule');
+    const dpart = s => String(s || '').slice(0, 10);
+    const tpart = s => { const m = /T.*/.exec(String(s || '')); return m ? m[0] : 'T00:00:00'; };
+    const D = v => new Date(v + 'T00:00:00');
+    const workingDays = (a, b) => { if (b < a) return 1; let d = new Date(a), n = 0; while (d <= b) { const w = d.getDay(); if (w !== 0 && w !== 6) n++; d.setDate(d.getDate() + 1); } return n || 1; };
+    let start = dpart(row.PlanStart) || newYmd;
+    if (D(newYmd) < D(start)) start = newYmd; // a task can't finish before it starts
+    row.PlanStart = start + tpart(row.PlanStart);
+    row.PlanComplete = newYmd + tpart(row.PlanComplete);
+    row.PlanDuration = workingDays(D(start), D(newYmd));
+    row.rowstate = 'US';
+    const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
+      project, projectKey, tasksDM: { insertedItems: [], updatedItems: [row], deletedItems: [] },
+      taskUsersDM: null, predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      removeProjectUsers: [], addedAssignments: [], tasksFromTemplate: 0,
+      scheduleSessionID: sched.scheduleSessionID, newMods: null, poUpdateList: []
+    }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+    scheduleCache.delete(String(projectKey));
+    return { PlanStart: row.PlanStart, PlanComplete: row.PlanComplete };
   }
 
   let lastHref = '';
@@ -1747,8 +1784,10 @@
     const covered = pages.length > 1 && pages[pages.length - 1] !== schedulePage();
     if (!r || !r.width || covered || board.suspended) { board.host.style.visibility = 'hidden'; return; }
     board.host.style.visibility = 'visible';
-    const h = r.height > 150 ? r.height : innerHeight - r.top - 8;
-    Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: Math.max(220, h) + 'px' });
+    // Fill from the grid's top to near the viewport bottom — not the grid's own rendered height, which is short when
+    // the list is filtered to a few rows (or just after adding a task), or the board's taller content gets clipped.
+    const h = Math.max(220, innerHeight - r.top - 16);
+    Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: h + 'px' });
   }
 
   function buildBoardHost() {
@@ -2304,7 +2343,9 @@
       <div class="mcols"><div class="mbody">
         <div class="mgrid">
           ${tu ? `<div><label>Assignee</label><div class="mp">${avatarHtml(tu.UserKey || -1, tu.UserName, tu.Initials)}<span>${esc((tu.UserName || 'Unassigned slot').trim())}<small>${esc(tu.ServiceDescription || '')}</small></span></div></div>` : ''}
-          <div><label>Due</label><div>${fmtDate((tu && tu.APlanComplete) || t.PlanComplete)}</div></div>
+          <div><label>Due</label>${st.editingDue
+            ? `<div class="mrow"><input type="date" class="mduei" value="${String((tu && tu.APlanComplete) || t.PlanComplete || '').slice(0, 10)}"><button type="button" class="mbtn primary mduesave">Save</button><button type="button" class="mbtn mduecancel">Cancel</button></div>`
+            : `<div>${fmtDate((tu && tu.APlanComplete) || t.PlanComplete)}${canEdit ? ' <button type="button" class="mlink medue">Change</button>' : ''}</div>`}</div>
           <div><label>Planned</label><div>${fmtDate(t.PlanStart)} → ${fmtDate(t.PlanComplete)}</div></div>
           ${tu ? `<div><label>Hours</label><div class="${planned && actual > planned ? 'over' : ''}">${fmtH(actual)} logged of ${fmtH(planned)} planned</div></div>` : ''}
         </div>
@@ -2465,6 +2506,20 @@
     if (t.classList.contains('madd')) { st.editing = true; st.draft = ''; st.base = ''; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('medit')) { st.editing = true; st.base = task.Description || ''; st.draft = String(st.base).replace(/<[^>]*>/g, ''); st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mcancel')) { st.editing = false; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('medue')) { st.editingDue = true; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('mduecancel')) { st.editingDue = false; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('mduesave')) {
+      const inp = board.root.querySelector('.mduei'); const val = inp && inp.value;
+      if (!val) { st.msg = 'Pick a date first.'; renderModal(); return; }
+      t.disabled = true; t.textContent = 'Saving…';
+      try {
+        const r = await saveTaskDueDate(board.projectKey, ref.taskKey, val);
+        task.PlanComplete = r.PlanComplete; task.PlanStart = r.PlanStart;
+        st.editingDue = false; st.msg = ''; toast('Due date updated');
+      } catch (err) { st.msg = 'Could not update the date: ' + (err && err.message || err); }
+      renderBoard();
+      return;
+    }
     if (t.classList.contains('mask')) {
       t.disabled = true; t.textContent = 'Opening a new post…';
       let pm = null; try { pm = await resolveProjectManager(board.projectKey); } catch (err) {}
