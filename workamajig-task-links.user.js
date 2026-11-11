@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.32.0';
+  const VERSION = '0.33.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -32,7 +32,8 @@
     project: (pk) => `${BASE}?aid=dashboards.project.dash&k=${pk}`,
     schedule: (pk) => `${BASE}?aid=projects.schedule.edit2&k=${pk}`,
     task: (pk, tk) => `${BASE}?aid=projects.schedule.edit2&k=${pk}#task=${tk}`,
-    assignment: (tuk) => `${BASE}?aid=projects.production.assignment&k=${tuk}`
+    assignment: (tuk) => `${BASE}?aid=projects.production.assignment&k=${tuk}`,
+    thread: (rk) => `${BASE}?aid=projects.diary.thread&k=${rk}`
   };
 
   // Open a screen the way Workamajig's own buttons do (Views.openPage), so it joins the app's page stack and the
@@ -1142,7 +1143,7 @@
         const showAll = st.more.has(t.rk) || t.items.length <= 4;
         const items = showAll ? t.items : [t.items[0]].concat(t.items.slice(-2));
         const hidden = t.items.length - items.length;
-        return `<div class="thread"><div class="subj"><span class="s">${esc(t.subject)}</span>${t.items.length > 1 ? `<span class="count">${t.items.length}</span>` : ''}<a class="link open" data-rk="${t.rk}" href="${BASE}?aid=projects.diary.thread&k=${t.rk}">Open thread</a></div>
+        return `<div class="thread"><div class="subj"><span class="s">${esc(t.subject)}</span>${t.items.length > 1 ? `<span class="count">${t.items.length}</span>` : ''}<button type="button" class="link copyconv" data-rk="${t.rk}" title="Copy a link to this conversation">Copy link</button><a class="link open" data-rk="${t.rk}" href="${urls.thread(t.rk)}">Open thread</a></div>
           ${msgHtml(items[0])}
           ${hidden ? `<div class="earlier"><button type="button" class="link moreb" data-rk="${t.rk}">Show ${hidden} earlier repl${hidden > 1 ? 'ies' : 'y'}</button></div>` : ''}
           ${items.slice(1).map(msgHtml).join('')}
@@ -1161,6 +1162,7 @@
       if (t.classList.contains('tog')) { const k = Number(t.dataset.k); st.open.has(k) ? st.open.delete(k) : st.open.add(k); return render(); }
       if (t.classList.contains('moreb')) { st.more.add(Number(t.dataset.rk)); return render(); }
       if (t.classList.contains('newpost')) { nav('projects.diary.add', a.projectKey, { taskKey: a.taskKey }); return; }
+      if (t.classList.contains('copyconv') && t.dataset.rk) { copy(urls.thread(t.dataset.rk), 'conversation link'); return; }
       if (t.classList.contains('open') && t.dataset.rk && plainClick(e)) { e.preventDefault(); nav('projects.diary.thread', Number(t.dataset.rk)); return; }
       if (t.classList.contains('rbtn')) {
         const rk = Number(t.dataset.rk);
