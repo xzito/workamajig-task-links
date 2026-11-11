@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.41.0';
+  const VERSION = '0.42.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -791,11 +791,12 @@
     return { PlanStart: row.PlanStart, PlanComplete: row.PlanComplete };
   }
 
-  // Create a brand-new task due on a given day — the same way the schedule's own "insert row" + Save does: a fresh task
-  // row placed in the save envelope's insertedItems (rowstate 'I'), cloning an existing task's full field set so no
-  // required column is missing, then overriding identity / date / budget fields. v1 scope: a top-level task appended at
-  // the end, no status, no assignee — a quick capture from the Calendar view. NOTE (Nov 2026): this is the one schedule
-  // write not yet validated live against a native save; test it on a disposable task before trusting it on real work.
+  // Create a brand-new top-level task due on a given day. Built to match Workamajig's own native "insert row" + Save
+  // payload field-for-field — captured live from a native insert (Nov 2026) and replicated here, rather than inferred
+  // from the read schema (the insert DM differs: TaskType 2 for a leaf, singular BudgetExpense/EstExpense, ApprovedCHLabor,
+  // a self-referential BudgetTaskKey -1, TaskColor, the tuhTaskParms time-phasing window, and NO per-row rowstate — the
+  // insertedItems bucket itself marks the insertion). v1 scope: a top-level task appended at the end, 1-day on the due
+  // date, default priority (3-Medium), no assignee. Only the name, dates, numbering and week window are per-task.
   async function createTask(projectKey, name, dueYmd) {
     projectKey = Number(projectKey);
     name = String(name || '').trim();
@@ -809,27 +810,39 @@
       application: 'wjl createTask', performRecalc: false, fromNotification: false, origData: null
     });
     const tasks = sched.tasks || [];
-    // Clone a real leaf task so every column WMJ expects is present and correctly typed; fall back to any row / {}.
-    const tmpl = tasks.find(t => Number(t.TaskType) === 1 && Number(t.SummaryTaskKey) !== 0)
-      || tasks.find(t => Number(t.TaskType) === 1) || tasks[0] || {};
-    const nextOrder = tasks.reduce((m, t) => Math.max(m, Number(t.ProjectOrder) || 0), 0) + 1;
-    const nextDisplay = tasks.reduce((m, t) => Math.max(m, Number(t.DisplayOrder) || 0), 0) + 1;
     const topNums = tasks.filter(t => !String(t.TaskID || '').includes('.'))
       .map(t => parseInt(t.TaskID, 10)).filter(n => Number.isFinite(n));
-    const nextId = String((topNums.length ? Math.max.apply(null, topNums) : 0) + 1);
+    const nextNum = (topNums.length ? Math.max.apply(null, topNums) : 0) + 1;
+    const nextOrder = tasks.reduce((m, t) => Math.max(m, Number(t.ProjectOrder) || 0), 0) + 1;
+    const count = tasks.length;
     const dt = dueYmd + 'T00:00:00';
-    const row = Object.assign({}, tmpl, {
-      TaskKey: -1, ProjectKey: projectKey, TaskID: nextId, TaskName: name, Description: null,
-      TaskType: 1, SummaryTaskKey: 0, TaskLevel: 0, MasterTaskKey: 0,
-      PlanStart: dt, PlanComplete: dt, PlanDuration: 1, BaseStart: null, BaseComplete: null,
-      ActStart: null, ActComplete: null, PercComp: 0, TaskStatus: 1,
-      ScheduleTask: 1, MoneyTask: 0, TrackBudget: 0,
-      EstHours: 0, BudgetLabor: 0, EstLabor: 0, BudgetExpenses: 0, EstExpenses: 0,
-      HourlyRate: 0, Markup: 0, ServiceKey: null, WorkTypeKey: null,
-      ScheduleNote: null, Comments: null, DisplayOrder: nextDisplay, ProjectOrder: nextOrder,
-      ConstraintDate: null, TaskConstraint: 0, TaskAssignmentKey: 0,
-      rowstate: 'I'
-    });
+    // The Mon–Sun week that contains the due date — matches WMJ's native time-phasing bucket window.
+    const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + 'T00:00:00';
+    const due = new Date(dt);
+    const wkStart = new Date(due); wkStart.setDate(due.getDate() + (due.getDay() === 0 ? -6 : 1 - due.getDay()));
+    const wkEnd = new Date(wkStart); wkEnd.setDate(wkStart.getDate() + 6);
+    const row = {
+      TaskKey: -1, ProjectKey: projectKey, SummaryTaskKey: 0, TaskName: name, TaskType: 2,
+      TaskAssignmentTypeKey: null, TaskColor: '#0000FF', TrackBudget: 1, MoneyTask: 1, HourlyRate: 0,
+      IOCommission: 0, ShowDescOnEst: 0, ServiceKey: null, Taxable: 0, Taxable2: 0, HideFromClient: 0,
+      EstHours: 0, BudgetLabor: 0, EstLabor: 0, BudgetExpense: 0, EstExpense: 0,
+      ApprovedCOHours: 0, ApprovedCHLabor: 0, ApprovedCOBudgetLabor: 0, ApprovedCOExpense: 0, ApprovedCOBudgetExp: 0,
+      Contingency: 0, MasterTaskKey: 0, AllowAnyone: 0, EstimateHours: 0, FormCount: 0, ActualHours: 0,
+      AllocatedHours: 0, AttachmentCount: 0, TaskConstraint: 0, ConstraintName: 'As Soon As Possible', WorkAnyDay: 0,
+      PercComp: 0, PercCompSeparate: 1, PredecessorsComplete: 1, TaskPriorityKey: 205, PriorityName: '3-Medium',
+      ScheduleTask: 1, TCProjectStatusKey: null, TCProjectStatus: '', TCProjectStatusID: '',
+      PlanStart: dt, PlanComplete: dt, PlanDuration: 1, depth: 0, DisplayOrder: nextNum, TaskLevel: 0,
+      ProjectOrder: nextOrder, TaskID: String(nextNum), additionalData: [], _idx: count,
+      AssignedFullName: '', Assigned: '', AssignedServiceCodes: '', AssignedServiceDescription: '',
+      BlockoutConflict: false, AssignedPreds: '', batch: 0,
+      tuhTaskParms: {
+        cols: [], bucketDelta: 0, status: '', PlanStart: dt, PlanComplete: dt,
+        planningProjectAutoRollover: false, workDays: [0, 1, 1, 1, 1, 1, 0], fusionPastBucket: false, bucketPerWeek: false,
+        buckets: [{ startDate: ymd(wkStart), endDate: ymd(wkEnd), prevWeek: false }]
+      },
+      insertedTaskProjectRollup: true, scheduled: true, scheduleOrder: count, maxDate: dt, ConstraintDate: dt,
+      TaskStatus: 1, ScheduleNote: '', EventStart: null, EventEnd: null, BudgetTaskKey: -1
+    };
     const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
       project, projectKey, tasksDM: { insertedItems: [row], updatedItems: [], deletedItems: [] },
       taskUsersDM: null, predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
