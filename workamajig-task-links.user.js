@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.38.0';
+  const VERSION = '0.39.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1869,7 +1869,10 @@
     // Fill from the grid's top to near the viewport bottom — not the grid's own rendered height, which is short when
     // the list is filtered to a few rows (or just after adding a task), or the board's taller content gets clipped.
     const h = Math.max(220, innerHeight - r.top - 16);
-    Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: h + 'px' });
+    // Extend to near the viewport right so the board also covers the native row-detail slideout, which shrinks the
+    // grid when open and would otherwise peek out beside the board.
+    const w = Math.max(r.width, innerWidth - r.left - 2);
+    Object.assign(board.host.style, { left: r.left + 'px', top: r.top + 'px', width: w + 'px', height: h + 'px' });
   }
 
   function buildBoardHost() {
