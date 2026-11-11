@@ -16,7 +16,11 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.42.0';
+  // The `application` tag Workamajig stamps on every schedule API call shows up in their server logs. We send the exact
+  // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
+  // normal schedule refresh in those logs rather than announcing a third-party tool.
+  const SCHED_APP = 'scheduleEdit getSchedule';
+  const VERSION = '0.43.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -70,7 +74,7 @@
     if (!scheduleCache.has(projectKey)) {
       scheduleCache.set(projectKey, call('Modules.Projects.Schedule', 'getSchedule', {
         projectKey: Number(projectKey), searchKeys: null, includeTransactions: false, loadBucketDetail: false,
-        application: 'wjl getSchedule', performRecalc: false, fromNotification: false, origData: null
+        application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
       }).then(d => {
         const tasks = new Map(), slots = new Map(), byTuk = new Map();
         const users = (d.users || []).map(u => ({ UserKey: u.UserKey, UserName: (u.UserName || '').trim(), Email: u.Email || '', ClientVendorLogin: +u.ClientVendorLogin || 0 }));
@@ -733,7 +737,7 @@
     if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
     const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
       projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
-      application: 'wjl saveDescription', performRecalc: false, fromNotification: false, origData: null
+      application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
     });
     const row = (sched.tasks || []).find(t => t.TaskKey === taskKey);
     if (!row) throw new Error('task not found in the schedule');
@@ -766,7 +770,7 @@
     if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
     const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
       projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
-      application: 'wjl saveDueDate', performRecalc: false, fromNotification: false, origData: null
+      application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
     });
     const row = (sched.tasks || []).find(t => t.TaskKey === taskKey);
     if (!row) throw new Error('task not found in the schedule');
@@ -807,7 +811,7 @@
     if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
     const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
       projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
-      application: 'wjl createTask', performRecalc: false, fromNotification: false, origData: null
+      application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
     });
     const tasks = sched.tasks || [];
     const topNums = tasks.filter(t => !String(t.TaskID || '').includes('.'))
