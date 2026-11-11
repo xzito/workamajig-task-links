@@ -14,15 +14,15 @@
   'use strict';
 
   const BASE = location.origin + '/platinum/';
-  const SS_KEY = 'wjl.pendingTask';
-  const SS_POST = 'wjl.pendingPost';
+  const SS_KEY = 'uxa.pendingTask';
+  const SS_POST = 'uxa.pendingPost';
   // The `application` tag Workamajig stamps on every schedule API call shows up in their server logs. We send the exact
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.43.0';
-  window.WJL_VERSION = VERSION;
-  try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
+  const VERSION = '0.44.0';
+  // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
+  window.__uxaV = VERSION;
 
   // Workamajig rewrites the URL on load and drops the hash, so capture it now (document-start).
   (function captureHash() {
@@ -49,7 +49,7 @@
         Views.openPage(io ? new Action(aidName, k, io) : new Action(aidName, k));
         return;
       }
-    } catch (e) { console.warn('[wjl] openPage failed, falling back to a page load', e); }
+    } catch (e) { console.warn('[uxa] openPage failed, falling back to a page load', e); }
     location.assign(`${BASE}?aid=${aidName}` + (k != null ? `&k=${encodeURIComponent(k)}` : '') + (io ? `&io=${encodeURIComponent(JSON.stringify(io))}` : ''));
   }
   // Plain left click on one of our links: open in-app. Cmd/Ctrl/Shift/middle click keep the browser's new-tab behavior.
@@ -179,7 +179,7 @@
   function ensureUi() {
     if (btn) return;
     btn = document.createElement('button');
-    btn.type = 'button'; btn.id = 'wjl-btn'; btn.title = 'Copy link to this task / assignment'; btn.textContent = '🔗';
+    btn.type = 'button'; btn.id = 'uxa-btn'; btn.title = 'Copy link to this task / assignment'; btn.textContent = '🔗';
     btn.style.cssText = 'position:fixed;z-index:99998;display:none;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;line-height:1;padding:2px 4px;box-shadow:0 1px 3px rgba(0,0,0,.15)';
     btn.addEventListener('mousedown', e => e.stopPropagation());
     btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); openMenu(); });
@@ -201,7 +201,7 @@
   }
   function toast(msg) {
     if (!toastEl) {
-      toastEl = document.createElement('div'); toastEl.id = 'wjl-toast';
+      toastEl = document.createElement('div'); toastEl.id = 'uxa-toast';
       toastEl.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:8px 14px;border-radius:6px;font:13px/1.4 sans-serif;z-index:99999;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw;white-space:pre-wrap';
       document.body.appendChild(toastEl);
     }
@@ -225,7 +225,7 @@
     const adapter = row && (row.tagName === 'GRID-ROW' ? adapters[aid()] : resolveTarget);
     if (!row || !adapter) return;
 
-    menu = document.createElement('div'); menu.id = 'wjl-menu';
+    menu = document.createElement('div'); menu.id = 'uxa-menu';
     menu.style.cssText = 'position:fixed;z-index:99999;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);min-width:280px;font:13px/1.4 sans-serif;padding:4px 0';
     const r = btn.getBoundingClientRect();
     menu.style.left = Math.min(r.left, window.innerWidth - 340) + 'px';
@@ -257,7 +257,7 @@
     try {
       ref = await adapter(row);
       if (ref && ref.projectKey) sched = await getSchedule(ref.projectKey);
-    } catch (e) { console.warn('[wjl]', e); }
+    } catch (e) { console.warn('[uxa]', e); }
     if (!menu) return;
     body.innerHTML = '';
     if (!ref) { item('<i>No task on this row</i>'); return; }
@@ -293,8 +293,8 @@
   }
 
   function spotlight(row) {
-    if (document.querySelector('.wjl-spot')) return;
-    const mk = css => { const d = document.createElement('div'); d.className = 'wjl-spot'; d.style.cssText = 'position:fixed;z-index:99990;pointer-events:none;transition:opacity .4s;opacity:0;' + css; document.body.appendChild(d); return d; };
+    if (document.querySelector('.uxa-spot')) return;
+    const mk = css => { const d = document.createElement('div'); d.className = 'uxa-spot'; d.style.cssText = 'position:fixed;z-index:99990;pointer-events:none;transition:opacity .4s;opacity:0;' + css; document.body.appendChild(d); return d; };
     const dim = 'background:rgba(0,0,0,.38);';
     const [pTop, pBottom, pLeft, pRight, ring] = [
       mk(dim), mk(dim), mk(dim), mk(dim),
@@ -388,13 +388,13 @@
   }
 
   async function fillNativeMenu(m, refP) {
-    m.querySelectorAll('.wjl-native').forEach(x => x.remove());
+    m.querySelectorAll('.uxa-native').forEach(x => x.remove());
     const group = document.createElement('div');
-    group.className = 'wjl-native';
+    group.className = 'uxa-native';
     group.style.cssText = 'border-top:1px solid #e5e5e5;margin-top:4px;padding-top:8px';
     m.appendChild(group);
     // Match the menu's own button classes (spacing differs between menus), swapping in the link icon.
-    const proto = m.querySelector('button:not(.wjl-native button)');
+    const proto = m.querySelector('button:not(.uxa-native button)');
     const baseCls = proto ? [...proto.classList].filter(c => !/^i-/.test(c) && c !== 'bound').join(' ') : 'btn-std icon-l text';
     const dismiss = () => {
       const dlg = m.closest('dialog');
@@ -445,7 +445,7 @@
     if (card && card.querySelector('button[data-target="timeMenu"][data-key]')) card = null;
     if (row && row.classList.contains('datarow')) showFor(row);
     else if (card) showFor(card);
-    else if (btn && !e.target.closest('#wjl-btn,#wjl-menu')) scheduleHide();
+    else if (btn && !e.target.closest('#uxa-btn,#uxa-menu')) scheduleHide();
   }
   // ---------- Assignment page: full width + hours logged ----------
   const ASSIGN_AID = 'projects.production.assignment';
@@ -457,23 +457,23 @@
     if (!wideStyle) {
       const P = '#desktop > section > page.wide[data-aid="projects.production.assignment"]';
       wideStyle = document.createElement('style');
-      wideStyle.id = 'wjl-wide';
+      wideStyle.id = 'uxa-wide';
       // Same width the app gives non-"wide" pages, and let the task title wrap instead of truncating.
       // Full width; header row grows with a long title; title wraps at a smaller size instead of truncating.
       wideStyle.textContent = `${P}{width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2) !important;grid-template-rows:minmax(90px,auto) 1fr !important}` +
         // A panel (New Post, Reply, …) slid in on top: squeeze into the space to its left instead of hiding under it,
         // and drop the to-do rail so the description keeps room.
         `${P}:has(~ page.open){width:calc(100vw - var(--sn-w,232px) - var(--sn-gap) * 2 - 912px) !important;min-width:520px !important}` +
-        `${P}:has(~ page.open) > section > #wjl-asgrail{display:none !important}` +
+        `${P}:has(~ page.open) > section > #uxa-asgrail{display:none !important}` +
         `${P} > header{min-height:90px;padding-top:18px;padding-bottom:8px;box-sizing:border-box}` +
         `${P} > header hgroup{min-width:0;flex:1 1 auto}` +
         `${P} > header h1{max-width:none !important;white-space:normal !important;font-size:2.4rem !important;line-height:1.2 !important;margin-top:0 !important;overflow:visible !important}` +
         `${P} > header h5{white-space:normal !important;overflow:visible !important;position:static !important;display:block !important;margin-top:2px !important}` +
-        '#wjl-hours{border-collapse:collapse;margin:2px 0 10px;font-size:12px;color:#555}' +
-        '#wjl-hours th{font-weight:400;color:#999;text-align:right;padding:0 0 2px 14px}' +
-        '#wjl-hours th:first-child{text-align:left;padding-left:0}' +
-        '#wjl-hours td{padding:1px 0 1px 14px;text-align:right;white-space:nowrap}' +
-        '#wjl-hours td:first-child{text-align:left;padding-left:0;color:#333}';
+        '#uxa-hours{border-collapse:collapse;margin:2px 0 10px;font-size:12px;color:#555}' +
+        '#uxa-hours th{font-weight:400;color:#999;text-align:right;padding:0 0 2px 14px}' +
+        '#uxa-hours th:first-child{text-align:left;padding-left:0}' +
+        '#uxa-hours td{padding:1px 0 1px 14px;text-align:right;white-space:nowrap}' +
+        '#uxa-hours td:first-child{text-align:left;padding-left:0;color:#333}';
     }
     if (present && !wideStyle.isConnected) document.head.appendChild(wideStyle);
     if (!present && wideStyle.isConnected) wideStyle.remove();
@@ -484,9 +484,9 @@
     assignmentLinks(key);
     if (key && asgLayoutOn()) getAssignment(key).then(a => { if (a.taskKey && aid() === ASSIGN_AID && qs().get('k') === key) asgLayout(a); }).catch(() => {});
     const due = document.querySelector('page.open div.pad-b-l > h2');
-    if (!key || !due || due.parentElement.querySelector('#wjl-hours')) return;
+    if (!key || !due || due.parentElement.querySelector('#uxa-hours')) return;
     const box = document.createElement('table');
-    box.id = 'wjl-hours';
+    box.id = 'uxa-hours';
     box.innerHTML = '<tr><td style="color:#999">Loading hours…</td></tr>';
     due.insertAdjacentElement('afterend', box);
     const fmt = h => String(Math.round((h || 0) * 100) / 100);
@@ -509,9 +509,9 @@
   // Small action row under the assignment title: open the task in its schedule, copy task / assignment links.
   function assignmentLinks(key) {
     const hg = document.querySelector('page.open[data-aid="projects.production.assignment"] > header hgroup');
-    if (!key || !hg || hg.querySelector('#wjl-asglinks')) return;
+    if (!key || !hg || hg.querySelector('#uxa-asglinks')) return;
     const host = document.createElement('div');
-    host.id = 'wjl-asglinks';
+    host.id = 'uxa-asglinks';
     host.style.cssText = 'display:block;margin-top:6px';
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `<style>
@@ -605,10 +605,10 @@
   function missingDescription(a) {
     if (a.taskDescription) return;
     const sec = document.querySelector('page.open [data-bind-visible="dp@section == \'desc\'"]');
-    if (!sec || sec.querySelector('#wjl-nodesc')) return;
+    if (!sec || sec.querySelector('#uxa-nodesc')) return;
     const anchor = sec.querySelector('div.pad-t-l') || sec.firstElementChild;
     const host = document.createElement('div');
-    host.id = 'wjl-nodesc';
+    host.id = 'uxa-nodesc';
     host.style.cssText = 'display:block;margin:0 0 20px;max-width:900px';
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
@@ -719,7 +719,7 @@
   function showDescription(sec, html) {
     const d = document.createElement('div');
     d.className = 'pad-section';
-    d.id = 'wjl-desc';
+    d.id = 'uxa-desc';
     const h = document.createElement('h2'); h.textContent = 'Task Description';
     const body = document.createElement('div'); body.innerHTML = descToHtml(html);
     d.append(h, body);
@@ -886,7 +886,7 @@
       clearInterval(t);
       try { sessionStorage.removeItem(SS_POST); } catch (e) {}
       try { fillPost(pg, model, req); toast('Post prefilled — review and Save'); }
-      catch (e) { console.warn('[wjl] prefill failed', e); }
+      catch (e) { console.warn('[uxa] prefill failed', e); }
     }, 250);
   }
 
@@ -942,8 +942,8 @@
   // Workamajig's own side column moves to the right (CSS order only) and loses the donut charts; the To Do List and
   // Conversations tabs are hidden because both now show inline. Everything we add is a Shadow DOM host.
   // "Classic layout" in the action row turns it off (remembered per browser).
-  const ASG_LAYOUT_PREF = 'wjl.asgLayout';
-  const SS_REPLY = 'wjl.pendingReply';
+  const ASG_LAYOUT_PREF = 'uxa.asgLayout';
+  const SS_REPLY = 'uxa.pendingReply';
   const asgLayoutOn = () => { try { return localStorage.getItem(ASG_LAYOUT_PREF) !== 'classic'; } catch (e) { return true; } };
   const setAsgLayout = on => { try { localStorage.setItem(ASG_LAYOUT_PREF, on ? 'new' : 'classic'); } catch (e) {} };
   const ASG = 'page.open[data-aid="projects.production.assignment"]';
@@ -952,7 +952,7 @@
   function asgLayoutStyle(on) {
     if (!asgStyle) {
       asgStyle = document.createElement('style');
-      asgStyle.id = 'wjl-asg2';
+      asgStyle.id = 'uxa-asg2';
       asgStyle.textContent =
         `${ASG} > section > sidesection div.pad-b-l > div.muted.x1-2,${ASG} > section > sidesection div.pad-b-l > div:has(canvas){display:none !important}` +
         `${ASG} button[data-action="clickTab"][data-key="todo"],${ASG} button[data-action="clickTab"][data-key="conv"]{display:none !important}`;
@@ -971,27 +971,27 @@
       if (tab) { tab.click(); asg.tabFixed = true; }
     }
     // The app can reuse this page for another assignment; drop hosts that belong to a different task.
-    pg.querySelectorAll('#wjl-asgtodo, #wjl-asgconv').forEach(h => { if (h.dataset.tk !== String(a.taskKey)) h.remove(); });
+    pg.querySelectorAll('#uxa-asgtodo, #uxa-asgconv').forEach(h => { if (h.dataset.tk !== String(a.taskKey)) h.remove(); });
     // Workamajig's side column stays on the left; to-dos get their own rail on the right of the page.
     const body = pg.querySelector(':scope > section > page-body');
-    let rail = pg.querySelector(':scope > section > #wjl-asgrail');
+    let rail = pg.querySelector(':scope > section > #uxa-asgrail');
     if (body && !rail) {
       rail = document.createElement('aside');
-      rail.id = 'wjl-asgrail';
+      rail.id = 'uxa-asgrail';
       rail.style.cssText = 'display:block;flex:none;width:300px;box-sizing:border-box;border-left:1px solid #ececec;background:#fafafa;padding:20px 18px;overflow:auto';
       body.insertAdjacentElement('afterend', rail);
     }
-    if (rail && !rail.querySelector('#wjl-asgtodo')) rail.appendChild(asgTodoHost(a));
+    if (rail && !rail.querySelector('#uxa-asgtodo')) rail.appendChild(asgTodoHost(a));
     const sec = pg.querySelector('[data-bind-visible="dp@section == \'desc\'"]');
-    let conv = sec && sec.querySelector('#wjl-asgconv');
+    let conv = sec && sec.querySelector('#uxa-asgconv');
     if (sec && !conv) {
       conv = asgConvHost(a);
       const pd = sec.querySelector(':scope > div.pad-t-l');
       pd ? pd.insertAdjacentElement('beforebegin', conv) : sec.appendChild(conv);
     } else if (conv && asg.reload) {
       // Back from a reply or new post: show it.
-      conv.wjlLoad && conv.wjlLoad();
-      const td = pg.querySelector('#wjl-asgtodo'); td && td.wjlLoad && td.wjlLoad();
+      conv.uxaLoad && conv.uxaLoad();
+      const td = pg.querySelector('#uxa-asgtodo'); td && td.uxaLoad && td.uxaLoad();
     }
     asg.reload = false;
   }
@@ -1017,7 +1017,7 @@
   // ----- right rail: to-dos (same calls as the board modal and the Schedule page) -----
   function asgTodoHost(a) {
     const host = document.createElement('div');
-    host.id = 'wjl-asgtodo';
+    host.id = 'uxa-asgtodo';
     host.dataset.tk = String(a.taskKey);
     host.style.cssText = 'display:block';
     const root = host.attachShadow({ mode: 'open' });
@@ -1047,7 +1047,7 @@
       } catch (e) { st.todos = st.todos || []; st.msg = 'Could not load to-dos: ' + (e && e.message || e); }
       render();
     };
-    host.wjlLoad = load;
+    host.uxaLoad = load;
     const render = () => {
       const canAdd = R().prjEditToDos !== false, canDel = !!R().prjDeleteToDos;
       const all = (st.todos || []).slice().sort((x, y) => (x.Completed - y.Completed) || ((x.DisplayOrder || 0) - (y.DisplayOrder || 0)));
@@ -1145,7 +1145,7 @@
   // opts.compact: smaller heading for the board modal. opts.onNavigate: called before opening another screen.
   function asgConvHost(a, opts = {}) {
     const host = document.createElement('div');
-    if (!opts.compact) host.id = 'wjl-asgconv';
+    if (!opts.compact) host.id = 'uxa-asgconv';
     host.dataset.tk = String(a.taskKey);
     host.style.cssText = opts.compact ? 'display:block;margin:4px 0 0' : 'display:block;margin:8px 0 28px;max-width:920px';
     const nav = (...args) => { if (opts.onNavigate) opts.onNavigate(); openApp(...args); };
@@ -1205,10 +1205,10 @@
         st.posts = threads.flat(); st.err = '';
       } catch (e) { st.posts = st.posts || []; st.err = 'Could not load conversations: ' + (e && e.message || e); }
       render();
-      host.wjlLoaded = true;
-      host.dispatchEvent(new CustomEvent('wjlconvloaded'));
+      host.uxaLoaded = true;
+      host.dispatchEvent(new CustomEvent('uxaconvloaded'));
     };
-    host.wjlLoad = load;
+    host.uxaLoad = load;
 
     const initials = n => String(n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
     const msgHtml = p => {
@@ -1369,7 +1369,7 @@
               have.add(String(u.UserKey)); added++;
             });
             if (added) model.emailTo.fire();
-          } catch (e) { console.warn('[wjl] add mention recipients failed', e); }
+          } catch (e) { console.warn('[uxa] add mention recipients failed', e); }
         }
         toast(added ? `Reply prefilled; ${added} mentioned ${added > 1 ? 'people' : 'person'} added to recipients. Review and Post Reply.` : 'Reply prefilled. Check the recipients, then Post Reply');
       };
@@ -1381,14 +1381,14 @@
   // One card per assignment (status lives on the assignment, not the task). Drawn as a fixed overlay over the
   // schedule grid inside a Shadow DOM; the grid itself is never touched. Status changes use the same single-row
   // call as the Today board (WJAPP.Modules.Project.Traffic.updateAssignmentStatus).
-  const BOARD_PREF = 'wjl.boardMode';
+  const BOARD_PREF = 'uxa.boardMode';
   const COMPLETED_KEY = 1048;
   const STATUS_COLORS = { 'Backlog': '#C2C2C2', 'Ready': '#B3DC6C', 'In Progress': '#16A765', 'Ready for Review/Blocked': '#F83A22', 'Completed': '#A47AE2' };
   const FALLBACK_COLORS = ['#7aa7d9', '#e0a82e', '#d07ad9', '#5cc2c2', '#9b9b9b'];
   const board = { on: false, host: null, root: null, toggle: null, projectKey: null, data: null, user: 0, search: '',
     showCompleted: false, timer: null, dirty: false, drag: null, seq: 0, view: 'board', calShow: false, calExpand: null,
     calAdd: null, calAdding: false };
-  const COLLAPSE_PREF = 'wjl.boardCollapsed';
+  const COLLAPSE_PREF = 'uxa.boardCollapsed';
   board.collapsed = (() => { try { return JSON.parse(localStorage.getItem(COLLAPSE_PREF) || '{}') || {}; } catch (e) { return {}; } })();
   const saveCollapsed = () => { try { localStorage.setItem(COLLAPSE_PREF, JSON.stringify(board.collapsed)); } catch (e) {} };
   // Completed starts collapsed; every other column starts open. Choices are remembered by column name.
@@ -1501,7 +1501,7 @@
     const fallback = pg && pg.querySelector('button[data-action="toggleGantt"]');
     if (!spacer && !fallback) return;
     const host = document.createElement('span');
-    host.id = 'wjl-board-seg';
+    host.id = 'uxa-board-seg';
     host.style.cssText = 'display:inline-flex;align-self:center;vertical-align:middle;margin-right:12px;flex:none';
     const r = host.attachShadow({ mode: 'open' });
     r.innerHTML = `<style>
@@ -1529,7 +1529,7 @@
     const anchor = inSchedule('button[data-action="toggleGantt"]');
     if (!anchor) return;
     const host = document.createElement('span');
-    host.id = 'wjl-board-toggle';
+    host.id = 'uxa-board-toggle';
     host.style.cssText = 'display:inline-flex;vertical-align:middle;margin:0 10px 0 12px';
     const r = host.attachShadow({ mode: 'open' });
     r.innerHTML = `<style>
@@ -1588,7 +1588,7 @@
     // "relative to the page panel", which pushed the menu down and clipped it at the panel's right edge.
     if (board.hygMenu) board.hygMenu.remove();
     const mh = document.createElement('div');
-    mh.id = 'wjl-hyg-menu';
+    mh.id = 'uxa-hyg-menu';
     mh.style.cssText = 'position:fixed;inset:0 auto auto 0;width:0;height:0;z-index:10001';
     const mr = mh.attachShadow({ mode: 'open' });
     mr.innerHTML = `<style>${r.querySelector('style').textContent}</style><div class="hmenu" hidden></div>`;
@@ -1720,22 +1720,22 @@
   function installFilterWrap(ds) {
     const fo = ds && ds.options && ds.options.filter;
     if (!fo || typeof fo.f !== 'function') return false;
-    if (!fo.wjlWrap || fo.f !== fo.wjlWrap) {
+    if (!fo.uxaWrap || fo.f !== fo.uxaWrap) {
       const orig = fo.f;
-      fo.wjlOrig = orig;
+      fo.uxaOrig = orig;
       // A chosen task shows if Workamajig's own filter allows it. A group heading shows only if at least one chosen
       // task under it is itself visible (so headings of completed, hidden matches don't linger on their own).
-      fo.wjlWrap = function (item, idx, src) {
+      fo.uxaWrap = function (item, idx, src) {
         const ok = orig.call(this, item, idx, src);
-        if (!ok || !fo.wjlKeys) return ok;
+        if (!ok || !fo.uxaKeys) return ok;
         const k = item.TaskKey;
-        if (fo.wjlLeaf.has(k)) return true;
-        const under = fo.wjlUnder.get(k);
+        if (fo.uxaLeaf.has(k)) return true;
+        const under = fo.uxaUnder.get(k);
         if (!under) return false;
         const live = new Map((ds.source || []).map(t => [t.TaskKey, t]));
         return under.some(lk => { const l = live.get(lk); return !!l && orig.call(this, l, idx, src); });
       };
-      fo.f = fo.wjlWrap;
+      fo.f = fo.uxaWrap;
     }
     return true;
   }
@@ -1752,7 +1752,7 @@
       while (x) { keys.add(x.TaskKey); if (!under.has(x.TaskKey)) under.set(x.TaskKey, []); under.get(x.TaskKey).push(k); x = byKey.get(x.SummaryTaskKey); }
     });
     const fo = ds.options.filter;
-    fo.wjlLeaf = new Set(leafKeys); fo.wjlUnder = under; fo.wjlKeys = keys;
+    fo.uxaLeaf = new Set(leafKeys); fo.uxaUnder = under; fo.uxaKeys = keys;
     listFilter = { kind, key, label, leaf: new Set(leafKeys), ds };
     ds.refresh(true);
     closeListHygiene();
@@ -1760,7 +1760,7 @@
   }
   function clearListFilter() {
     const lf = listFilter; listFilter = null;
-    if (lf && lf.ds && lf.ds.options && lf.ds.options.filter) { lf.ds.options.filter.wjlKeys = null; try { lf.ds.refresh(true); } catch (e) {} }
+    if (lf && lf.ds && lf.ds.options && lf.ds.options.filter) { lf.ds.options.filter.uxaKeys = null; try { lf.ds.refresh(true); } catch (e) {} }
     renderListHygiene();
   }
   // Drop the filter if its page went away; re-wrap if the app rebuilt its filter (e.g. after a settings reload).
@@ -1769,7 +1769,7 @@
     const ds = scheduleDs();
     if (!ds || ds !== listFilter.ds) { listFilter = null; renderListHygiene(); return; }
     const fo = ds.options && ds.options.filter;
-    if (fo && fo.f !== fo.wjlWrap) { const keys = fo.wjlKeys; installFilterWrap(ds); fo.wjlKeys = keys || null; if (!fo.wjlKeys) { listFilter = null; renderListHygiene(); } else ds.refresh(true); }
+    if (fo && fo.f !== fo.uxaWrap) { const keys = fo.uxaKeys; installFilterWrap(ds); fo.uxaKeys = keys || null; if (!fo.uxaKeys) { listFilter = null; renderListHygiene(); } else ds.refresh(true); }
   }
   // "Showing …" chip: how many matching tasks are visible, and how many Hide Completed Tasks keeps hidden.
   function listFilterSummary() {
@@ -1853,10 +1853,10 @@
 
   // Gantt, Templates, Task Detail and the column-set picker (e.g. "PM Advance View") only apply to the list, so hide them while the board is up.
   function setListOnlyButtons(hidden) {
-    let st = document.getElementById('wjl-board-hide');
+    let st = document.getElementById('uxa-board-hide');
     if (!st) {
       st = document.createElement('style');
-      st.id = 'wjl-board-hide';
+      st.id = 'uxa-board-hide';
       document.head.appendChild(st);
     }
     st.textContent = hidden
@@ -1945,7 +1945,7 @@
 
   function buildBoardHost() {
     const host = document.createElement('div');
-    host.id = 'wjl-board';
+    host.id = 'uxa-board';
     host.style.cssText = 'position:fixed;z-index:10;display:none'; // under the app header (20) and sidebar fly-outs (30)
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `<style>
@@ -2188,7 +2188,7 @@
   // open problem, and a summary would double-count the children beneath it — but a PM can switch either back on (saved
   // per browser). When Workamajig's own "Hide Completed Tasks" is on, completed rows aren't on screen, so they stay out
   // regardless, keeping the hygiene numbers in step with what the list shows.
-  const HYG_COUNT_KEY = 'wjl.hygiene.counting';
+  const HYG_COUNT_KEY = 'uxa.hygiene.counting';
   function hygCountPrefs() { try { return JSON.parse(localStorage.getItem(HYG_COUNT_KEY)) || {}; } catch (e) { return {}; } }
   function setHygCountPref(k, v) { const p = hygCountPrefs(); p[k] = !!v; try { localStorage.setItem(HYG_COUNT_KEY, JSON.stringify(p)); } catch (e) {} }
   function nativeHideCompleted() {
@@ -2540,7 +2540,7 @@
       if (!ch) {
         ch = asgConvHost({ projectKey: Number(board.projectKey), taskKey: ref.taskKey }, { compact: true, onNavigate: () => { board.reopen = { ref, pk: board.projectKey, ts: Date.now() }; closeModal(); } });
         board.convHosts.set(ref.taskKey, ch);
-      } else if (st.reloadConv) ch.wjlLoad && ch.wjlLoad();
+      } else if (st.reloadConv) ch.uxaLoad && ch.uxaLoad();
       st.reloadConv = false;
       slot.appendChild(ch);
       if (st.scrollConv) {
@@ -2549,7 +2549,7 @@
         const jump = () => { const mb = board.root.querySelector('.mbody'), sl = board.root.querySelector('.mconvslot'); if (mb && sl) mb.scrollTop += sl.getBoundingClientRect().top - mb.getBoundingClientRect().top - 8; };
         setTimeout(jump, 30);
         // Threads still loading: the body is too short to scroll yet, so jump again once they're in.
-        if (!ch.wjlLoaded) ch.addEventListener('wjlconvloaded', () => setTimeout(jump, 30), { once: true });
+        if (!ch.uxaLoaded) ch.addEventListener('uxaconvloaded', () => setTimeout(jump, 30), { once: true });
       }
     }
     // Keep the body's scroll position when the modal redraws (e.g. when to-dos finish loading).
@@ -2587,7 +2587,7 @@
   async function loadBoardConvs() {
     const pk = board.projectKey;
     try { const map = await loadProjectConvs(pk); if (board.projectKey === pk) { board.convs = map; board.convsFor = pk; renderBoard(); } }
-    catch (e) { console.warn('[wjl] conversations', e); }
+    catch (e) { console.warn('[uxa] conversations', e); }
   }
   const boardConvs = () => (board.convs && board.convsFor === board.projectKey ? board.convs : null);
   const convPass = taskKey => { if (!board.onlyConv) return true; const m = boardConvs(); return !!(m && m.get(taskKey)); };
@@ -2903,7 +2903,7 @@
     if (!p) return;
     const mk = () => {
       const d = document.createElement('div');
-      d.className = 'wjl-pdim';
+      d.className = 'uxa-pdim';
       d.title = 'Close';
       d.style.cssText = 'position:fixed;z-index:35;background:rgba(20,20,20,.45);opacity:0;transition:opacity .2s;cursor:pointer';
       d.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
@@ -2935,7 +2935,7 @@
   // Assignments) do have a server-side search over Project Number/Name, Task ID, Task Name and Assigned User Name
   // for active projects: ReportingManager.runListing with searchText. We load any one Assignments view's definition,
   // drop its conditions and groups, and run it with the Global Search text. Read-only; nothing is saved.
-  const TS_SS = 'wjl.taskSearch';
+  const TS_SS = 'uxa.taskSearch';
   const ts = { def: null, defP: null, seq: 0, text: '', rows: null, err: '', loading: false, showMore: false, showOther: false, showDone: false, wired: new WeakSet() };
   function taskSearchDef() {
     if (ts.def) return Promise.resolve(ts.def);
@@ -3020,10 +3020,10 @@
       if (last && last.text && (!inp.value || inp.value.trim() === last.text)) { ts.text = last.text; ts.rows = last.rows; ts.err = ''; ts.loading = false; }
       else if (inp.value.trim().length >= 2) runTaskSearch(inp.value);
     }
-    let host = lst.parentElement.querySelector(':scope > #wjl-tsearch');
+    let host = lst.parentElement.querySelector(':scope > #uxa-tsearch');
     if (!host) {
       host = document.createElement('div');
-      host.id = 'wjl-tsearch';
+      host.id = 'uxa-tsearch';
       host.attachShadow({ mode: 'open' });
       host.shadowRoot.addEventListener('click', onTaskSearchClick);
       lst.parentElement.insertBefore(host, lst);
@@ -3032,7 +3032,7 @@
   }
   function renderTaskSearch() {
     const pg = searchPage();
-    const host = pg && pg.querySelector('#wjl-tsearch');
+    const host = pg && pg.querySelector('#uxa-tsearch');
     if (!host) return;
     const root = host.shadowRoot;
     const css = `<style>
@@ -3058,7 +3058,7 @@
       button.more { font: inherit; font-size: 12px; background: none; border: 0; color: #1a73a8; cursor: pointer; padding: 6px 10px; }
       .chev { font-size: 11px; color: #999; }
     </style>`;
-    if (!ts.text && !ts.loading) { root.innerHTML = ''; host.style.display = 'none'; pg.classList.remove('wjl-hastasks'); return; }
+    if (!ts.text && !ts.loading) { root.innerHTML = ''; host.style.display = 'none'; pg.classList.remove('uxa-hastasks'); return; }
     host.style.display = '';
     let body = '';
     let count = '';
@@ -3086,10 +3086,10 @@
     }
     // Workamajig's "Sorry, we were not able to find anything" note is for its own categories; hide it while tasks match.
     const hasHits = !!(ts.rows && !ts.loading && taskSearchGroups().direct.length);
-    pg.classList.toggle('wjl-hastasks', hasHits);
-    if (!document.getElementById('wjl-tsearch-style')) {
-      const st = document.createElement('style'); st.id = 'wjl-tsearch-style';
-      st.textContent = 'page[data-aid="common.search"].wjl-hastasks tab#search > div.flex-none.bound { display: none !important; }';
+    pg.classList.toggle('uxa-hastasks', hasHits);
+    if (!document.getElementById('uxa-tsearch-style')) {
+      const st = document.createElement('style'); st.id = 'uxa-tsearch-style';
+      st.textContent = 'page[data-aid="common.search"].uxa-hastasks tab#search > div.flex-none.bound { display: none !important; }';
       document.head.appendChild(st);
     }
     const collapsed = ts.collapsed;
@@ -3138,7 +3138,7 @@
     searchTick();
   }
   function start() {
-    if (window.__MPM_TOOLKIT__) return; // the MagicusPM extension is handling this page; don't double-run
+    if (window.__uxaT) return; // another instance is already handling this page; don't double-run
     document.addEventListener('mouseover', onOver, true);
     document.addEventListener('click', onNativeMenuClick, true);
     document.addEventListener('scroll', () => { if (btn && !menu) btn.style.display = 'none'; }, true);
