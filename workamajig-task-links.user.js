@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.33.0';
+  const VERSION = '0.34.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1270,9 +1270,10 @@
       button { font: inherit; font-size: 12px; padding: 7px 14px; border: 0; background: #fff; color: #444; cursor: pointer; line-height: 1; }
       button + button { border-left: 1px solid #cfcfcf; }
       button.on { background: #333; color: #fff; font-weight: 600; }
-    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button></div>`;
+    </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button>${calEnabled() ? '<button type="button" class="cal" title="Open a calendar of tasks by due date">Calendar</button>' : ''}</div>`;
     r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
     r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); closeListHygiene(); openBoard(); });
+    if (calEnabled()) { const cb = r.querySelector('.cal'); if (cb) cb.addEventListener('click', openCalendar); }
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
     if (spacer) spacer.insertAdjacentElement('afterend', host); else fallback.parentElement.insertBefore(host, fallback);
     board.seg = host;
@@ -1950,6 +1951,114 @@
         days: t.PlanComplete ? Math.round((new Date(String(t.PlanComplete).slice(0, 10) + 'T00:00:00') - today) / 864e5) : null,
         due: t.PlanComplete ? new Date(String(t.PlanComplete).slice(0, 10) + 'T00:00:00') : null }));
     return { statuses, cards, unassigned };
+  }
+
+  // ---------- Calendar view (project tasks by due date; a modal over the schedule, ClickUp/Asana style) ----------
+  function calEnabled() { return true; }
+  const cal = { host: null, root: null, month: null, pk: null, data: null, err: '', hideDone: false, seq: 0 };
+  const CAL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const CAL_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const calYmd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  // Leaf tasks with a due date, tagged overdue/done. Summary rows are left out.
+  function calTasks(raw) {
+    const parents = new Set((raw.tasks || []).map(t => t.SummaryTaskKey).filter(Boolean));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return (raw.tasks || []).filter(t => !parents.has(t.TaskKey) && t.PlanComplete).map(t => {
+      const date = String(t.PlanComplete).slice(0, 10);
+      const d = new Date(date + 'T00:00:00');
+      const done = +t.PercComp >= 100 || !!t.ActComplete;
+      return { taskKey: t.TaskKey, taskId: t.TaskID || '', name: t.TaskName || '(task)', group: t.SummaryTaskName || '', date, done, overdue: !done && d < today };
+    });
+  }
+  function calMonthDays(month) {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const start = new Date(first); start.setDate(1 - first.getDay());
+    const days = []; for (let i = 0; i < 42; i++) { const d = new Date(start); d.setDate(start.getDate() + i); days.push(d); }
+    return days;
+  }
+  function buildCalHost() {
+    const host = document.createElement('div');
+    host.id = 'wjl-cal';
+    host.style.cssText = 'position:fixed;inset:0;z-index:2147483600;display:none';
+    const r = host.attachShadow({ mode: 'open' });
+    r.innerHTML = `<style>
+      :host { all: initial; font-family: inherit; color-scheme: light; }
+      * { box-sizing: border-box; font-family: inherit; }
+      .bg { position: absolute; inset: 0; background: rgba(20,20,30,.45); }
+      .panel { position: absolute; inset: 4vh 4vw; background: #fff; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.3); display: flex; flex-direction: column; overflow: hidden; }
+      .top { display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid #ececf1; flex-wrap: wrap; }
+      .top h2 { margin: 0; font-size: 16px; font-weight: 700; color: #222; min-width: 170px; }
+      .top .sub { color: #8a8a98; font-size: 12px; }
+      .nav { display: inline-flex; gap: 4px; }
+      button { font: inherit; font-size: 13px; border: 1px solid #cfcfcf; background: #fff; color: #333; border-radius: 8px; padding: 6px 11px; cursor: pointer; line-height: 1; }
+      button:hover { background: #f5f5f8; }
+      .x { margin-left: auto; border: 0; font-size: 20px; padding: 2px 10px; }
+      label.hd { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #555; cursor: pointer; }
+      .grid { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+      .dow { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid #ececf1; }
+      .dow span { padding: 6px 8px; font-size: 11px; color: #8a8a98; text-transform: uppercase; letter-spacing: .04em; }
+      .weeks { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(92px, 1fr); overflow: auto; }
+      .cell { border-right: 1px solid #f0f0f4; border-bottom: 1px solid #f0f0f4; padding: 4px 5px; overflow: hidden; display: flex; flex-direction: column; gap: 3px; }
+      .cell .dn { font-size: 12px; color: #666; align-self: flex-end; }
+      .cell.out { background: #fafafb; }
+      .cell.out .dn { color: #c4c4cc; }
+      .cell.today .dn { background: #2b6cb0; color: #fff; border-radius: 50%; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; }
+      a.chip { display: block; font-size: 11px; line-height: 1.25; padding: 2px 5px; border-radius: 5px; background: #eef1f6; color: #333; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid #9aa7bd; }
+      a.chip:hover { background: #e4e9f1; }
+      a.chip.ov { background: #fdecec; border-left-color: #e5484d; color: #a11111; }
+      a.chip.done { background: #eef4ee; border-left-color: #8bbf8b; color: #4a7a4a; text-decoration: line-through; }
+      .more { font-size: 10px; color: #8a8a98; padding-left: 4px; }
+      .empty { grid-column: 1/8; padding: 40px; text-align: center; color: #8a8a98; }
+    </style><div class="bg"></div><div class="panel"><div class="top"></div><div class="grid"><div class="dow">${CAL_DOW.map(d => `<span>${d}</span>`).join('')}</div><div class="weeks"></div></div></div>`;
+    r.querySelector('.bg').addEventListener('click', closeCalendar);
+    r.addEventListener('click', e => {
+      const t = e.target;
+      if (t.classList.contains('x')) return closeCalendar();
+      if (t.classList.contains('prev')) { cal.month.setMonth(cal.month.getMonth() - 1); return renderCalendar(); }
+      if (t.classList.contains('next')) { cal.month.setMonth(cal.month.getMonth() + 1); return renderCalendar(); }
+      if (t.classList.contains('todaybtn')) { const n = new Date(); cal.month = new Date(n.getFullYear(), n.getMonth(), 1); return renderCalendar(); }
+    });
+    r.addEventListener('change', e => { if (e.target.classList.contains('hdchk')) { cal.hideDone = e.target.checked; renderCalendar(); } });
+    ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && cal.host && cal.host.style.display === 'block') { e.stopPropagation(); closeCalendar(); } }, true);
+    document.body.appendChild(host);
+    cal.host = host; cal.root = r;
+  }
+  async function openCalendar() {
+    const pk = qs().get('k'); if (!pk) return;
+    if (!cal.host) buildCalHost();
+    const seq = ++cal.seq;
+    cal.pk = pk; cal.err = '';
+    if (!cal.month) { const n = new Date(); cal.month = new Date(n.getFullYear(), n.getMonth(), 1); }
+    cal.host.style.display = 'block';
+    renderCalendar();
+    try { const s = await getSchedule(pk); if (seq === cal.seq) { cal.data = s.raw; renderCalendar(); } }
+    catch (e) { if (seq === cal.seq) { cal.err = String(e && e.message || e); renderCalendar(); } }
+  }
+  function closeCalendar() { if (cal.host) cal.host.style.display = 'none'; }
+  function renderCalendar() {
+    if (!cal.root) return;
+    const r = cal.root;
+    const h1 = document.querySelector('page.open[data-aid="projects.schedule.edit2"] header h1, page.open[data-aid="projects.schedule.edit2"] header h2');
+    const projName = (h1 && h1.textContent || '').trim();
+    r.querySelector('.top').innerHTML = `<h2>${esc(CAL_MONTHS[cal.month.getMonth()])} ${cal.month.getFullYear()}</h2>`
+      + `<span class="nav"><button type="button" class="prev" title="Previous month">‹</button><button type="button" class="todaybtn">Today</button><button type="button" class="next" title="Next month">›</button></span>`
+      + `<span class="sub">${esc(projName)}</span>`
+      + `<label class="hd"><input type="checkbox" class="hdchk" ${cal.hideDone ? 'checked' : ''}> Hide completed</label>`
+      + `<button type="button" class="x" title="Close">×</button>`;
+    const weeks = r.querySelector('.weeks');
+    if (cal.err) { weeks.innerHTML = `<div class="empty">Could not load the schedule: ${esc(cal.err)}</div>`; return; }
+    if (!cal.data) { weeks.innerHTML = `<div class="empty">Loading…</div>`; return; }
+    const byDate = new Map();
+    for (const t of calTasks(cal.data)) { if (cal.hideDone && t.done) continue; if (!byDate.has(t.date)) byDate.set(t.date, []); byDate.get(t.date).push(t); }
+    const today = calYmd(new Date());
+    weeks.innerHTML = calMonthDays(cal.month).map(d => {
+      const key = calYmd(d), inMonth = d.getMonth() === cal.month.getMonth(), list = byDate.get(key) || [], shown = list.slice(0, 4);
+      const chips = shown.map(t => `<a class="chip ${t.overdue ? 'ov' : ''} ${t.done ? 'done' : ''}" href="${urls.task(cal.pk, t.taskKey)}" target="_blank" rel="noopener" title="${esc((t.taskId ? t.taskId + ' · ' : '') + t.name + (t.group ? ' — ' + t.group : ''))}">${esc(t.name)}</a>`).join('');
+      const more = list.length > shown.length ? `<div class="more">+${list.length - shown.length} more</div>` : '';
+      return `<div class="cell ${inMonth ? '' : 'out'} ${key === today ? 'today' : ''}"><span class="dn">${d.getDate()}</span>${chips}${more}</div>`;
+    }).join('');
   }
 
   function renderBoard() {
