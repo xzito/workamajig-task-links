@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.36.0';
+  const VERSION = '0.37.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -625,6 +625,7 @@
         textarea::placeholder { color: #999; }
         textarea::selection { background: #cfe6a8; color: #222; }
         textarea:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
+        ${RTE_CSS}
         .link { background: none; border: none; padding: 0; color: #1a8fbf; font-size: 12px; cursor: pointer; }
         .link:hover:not(:disabled) { background: none; text-decoration: underline; }
         .spacer { flex: 1; }
@@ -642,7 +643,7 @@
           <button type="button" class="ask">Request details in a conversation</button>
         </div>
         <div class="edit" hidden>
-          <textarea placeholder="Goal, scope, inputs and links, and what done looks like…"></textarea>
+          ${rteEditor('')}
           <div class="row">
             <button type="button" class="primary save">Save description</button>
             <button type="button" class="cancel">Cancel</button>
@@ -654,14 +655,15 @@
         </div>
       </div>`;
     const $ = sel => root.querySelector(sel);
-    const card = $('.card'), ta = $('textarea'), save = $('.save'), cancel = $('.cancel'), msg = $('.msg'), ask = $('.ask'), add = $('.add');
+    const card = $('.card'), save = $('.save'), cancel = $('.cancel'), msg = $('.msg'), ask = $('.ask'), add = $('.add');
+    const ed = () => $('.rtein');
     const show = editing => {
       card.classList.toggle('editing', editing);
       root.querySelectorAll('.view').forEach(e => (e.hidden = editing));
       root.querySelectorAll('.edit').forEach(e => (e.hidden = !editing));
       $('.title').textContent = editing ? 'Add a task description' : 'This task has no description';
+      if (editing) { wireRte($('.rte')); const e = ed(); if (e) { e.setAttribute('data-ph', 'Goal, scope, inputs and links, and what done looks like…'); e.focus(); } }
     };
-    const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, innerHeight * 0.5) + 'px'; };
 
     ask.addEventListener('click', async () => {
       ask.disabled = true; ask.textContent = 'Opening a new post…';
@@ -676,34 +678,33 @@
     });
 
     if (a.canEditTasks) add.hidden = false;
-    add.addEventListener('click', () => { show(true); msg.textContent = ''; grow(); ta.focus(); });
+    add.addEventListener('click', () => { show(true); msg.textContent = ''; });
     cancel.addEventListener('click', () => { show(false); });
     $('.outline').addEventListener('click', () => {
-      const outline = 'Goal:\n\nScope (in / out):\n\nInputs and links:\n\nDone when:\n';
-      ta.value = ta.value.trim() ? ta.value.replace(/\s*$/, '\n\n') + outline : outline;
-      grow(); ta.focus();
-      const at = ta.value.lastIndexOf('Goal:\n') + 6; ta.setSelectionRange(at, at);
+      const e = ed(); if (!e) return; e.focus();
+      const outline = '<p>Goal:</p><p>Scope (in / out):</p><p>Inputs and links:</p><p>Done when:</p>';
+      if (!e.textContent.trim()) e.innerHTML = outline; else document.execCommand('insertHTML', false, outline);
     });
-    ta.addEventListener('input', grow);
-    // Keep the app's own shortcuts from firing while typing here.
-    ['keydown', 'keyup', 'keypress'].forEach(t => ta.addEventListener(t, e => {
+    // Keep the app's own shortcuts from firing while typing in the editor.
+    ['keydown', 'keyup', 'keypress'].forEach(t => root.addEventListener(t, e => {
+      if (!(e.target.closest && e.target.closest('.rtein'))) return;
       e.stopPropagation();
       if (t !== 'keydown') return;
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save.click(); }
       else if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
     }));
     save.addEventListener('click', async () => {
-      const text = ta.value.trim();
-      if (!text) { msg.className = 'msg err'; msg.textContent = 'Type a description first.'; ta.focus(); return; }
-      save.disabled = cancel.disabled = ta.disabled = true; save.textContent = 'Saving…'; msg.className = 'msg'; msg.textContent = '';
+      const html = rteRead(root);
+      if (!descHasText(html)) { msg.className = 'msg err'; msg.textContent = 'Type a description first.'; const e = ed(); if (e) e.focus(); return; }
+      save.disabled = cancel.disabled = true; save.textContent = 'Saving…'; msg.className = 'msg'; msg.textContent = '';
       try {
-        await saveTaskDescription(a.projectKey, a.taskKey, text);
+        await saveTaskDescription(a.projectKey, a.taskKey, html);
         host.remove();
-        showDescription(sec, text);
+        showDescription(sec, html);
         assignmentCache.delete(Number(a.taskUserKey));
         toast('Description saved');
       } catch (e) {
-        save.disabled = cancel.disabled = ta.disabled = false; save.textContent = 'Save description';
+        save.disabled = cancel.disabled = false; save.textContent = 'Save description';
         msg.className = 'msg err';
         msg.textContent = 'Could not save: ' + (e && e.message || e) + '. You can still add it in the Schedule.';
       }
@@ -711,12 +712,12 @@
     anchor ? anchor.insertAdjacentElement('beforebegin', host) : sec.appendChild(host);
   }
 
-  function showDescription(sec, text) {
+  function showDescription(sec, html) {
     const d = document.createElement('div');
     d.className = 'pad-section';
     d.id = 'wjl-desc';
     const h = document.createElement('h2'); h.textContent = 'Task Description';
-    const body = document.createElement('div'); body.style.whiteSpace = 'pre-wrap'; body.textContent = text;
+    const body = document.createElement('div'); body.innerHTML = descToHtml(html);
     d.append(h, body);
     sec.insertAdjacentElement('afterbegin', d);
   }
@@ -1328,6 +1329,78 @@
   const boardPref = () => { try { return localStorage.getItem(BOARD_PREF) === '1'; } catch (e) { return false; } };
   const setBoardPref = v => { try { localStorage.setItem(BOARD_PREF, v ? '1' : '0'); } catch (e) {} };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // ---------- Rich text for task descriptions (Workamajig's Description field holds HTML; we render + edit a safe subset) ----------
+  const DESC_ALLOWED = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'P', 'BR', 'UL', 'OL', 'LI', 'A', 'DIV', 'SPAN']);
+  const DESC_DROP = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'HEAD', 'SVG', 'MATH', 'FORM', 'INPUT', 'BUTTON', 'IMG']);
+  // Whitelist sanitizer. Built in a DETACHED element so nothing loads/runs; disallowed tags are unwrapped (text kept),
+  // dangerous tags dropped whole, and every attribute stripped except a safe href on links.
+  function sanitizeDescHtml(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = String(html == null ? '' : html);
+    const walk = node => {
+      for (const c of [...node.childNodes]) {
+        if (c.nodeType === 8) { c.remove(); continue; }     // comments
+        if (c.nodeType !== 1) continue;                      // text nodes are fine
+        if (DESC_DROP.has(c.tagName)) { c.remove(); continue; }
+        if (!DESC_ALLOWED.has(c.tagName)) { c.replaceWith(...c.childNodes); continue; }
+        for (const a of [...c.attributes]) {
+          const keep = c.tagName === 'A' && a.name.toLowerCase() === 'href' && /^(https?:|mailto:)/i.test(String(a.value).trim());
+          if (!keep) c.removeAttribute(a.name);
+        }
+        if (c.tagName === 'A') { c.setAttribute('target', '_blank'); c.setAttribute('rel', 'noopener noreferrer nofollow'); }
+        walk(c);
+      }
+    };
+    walk(tmp);
+    return tmp.innerHTML.trim();
+  }
+  const descIsHtml = s => /<\/?(p|br|b|strong|i|em|u|ul|ol|li|a|div|span)\b/i.test(String(s || ''));
+  // Description → HTML for display/editor: existing HTML is sanitized; plain text becomes paragraphs with <br>s.
+  function descToHtml(raw) {
+    raw = String(raw == null ? '' : raw);
+    if (descIsHtml(raw)) return sanitizeDescHtml(raw);
+    const e = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    return raw.trim() ? raw.trim().split(/\n{2,}/).map(p => '<p>' + e(p).replace(/\n/g, '<br>') + '</p>').join('') : '';
+  }
+  // True when a description has real content (ignoring tags/whitespace).
+  const descHasText = raw => { const t = document.createElement('div'); t.innerHTML = descToHtml(raw); return !!t.textContent.replace(/ /g, ' ').trim(); };
+  const RTE_BAR = `<div class="rtebar">`
+    + `<button type="button" class="rteb" data-cmd="bold" title="Bold (Ctrl/Cmd+B)"><b>B</b></button>`
+    + `<button type="button" class="rteb" data-cmd="italic" title="Italic (Ctrl/Cmd+I)"><i>I</i></button>`
+    + `<button type="button" class="rteb" data-cmd="underline" title="Underline"><u>U</u></button>`
+    + `<button type="button" class="rteb" data-cmd="insertUnorderedList" title="Bulleted list">&#8226;</button>`
+    + `<button type="button" class="rteb" data-cmd="insertOrderedList" title="Numbered list">1.</button>`
+    + `<button type="button" class="rteb" data-cmd="createLink" title="Add a link">&#128279;</button>`
+    + `<button type="button" class="rteb" data-cmd="removeFormat" title="Clear formatting">&#10005;</button></div>`;
+  const rteEditor = html => `<div class="rte"><div class="rtein" contenteditable="true" role="textbox" aria-multiline="true">${html}</div>${RTE_BAR}</div>`;
+  const rteRead = root => { const ed = root.querySelector('.rtein'); return ed ? sanitizeDescHtml(ed.innerHTML) : ''; };
+  // CSS for the editor + rendered HTML, usable in any shadow root.
+  const RTE_CSS = `
+    .rte { border: 1px solid #cfcfcf; border-radius: 8px; overflow: hidden; background: #fff; }
+    .rte:focus-within { border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
+    .rtein { min-height: 120px; max-height: 40vh; overflow-y: auto; padding: 10px 12px; font-size: 13px; line-height: 1.55; color: #222; outline: none; }
+    .rtein:empty:before { content: attr(data-ph); color: #aaa; }
+    .rtein p { margin: 0 0 8px; } .rtein ul, .rtein ol { margin: 0 0 8px; padding-left: 22px; } .rtein a { color: #1a8fbf; }
+    .rtebar { display: flex; gap: 2px; padding: 5px 6px; border-top: 1px solid #eee; background: #fafafa; }
+    .rteb { font: inherit; font-size: 13px; min-width: 26px; height: 26px; border: 1px solid transparent; border-radius: 5px; background: none; color: #444; cursor: pointer; line-height: 1; }
+    .rteb:hover { background: #ececec; }
+    .desc-html { font-size: 13px; line-height: 1.55; color: #333; background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; max-height: 40vh; overflow-y: auto; }
+    .desc-html p { margin: 0 0 8px; } .desc-html p:last-child { margin-bottom: 0; } .desc-html ul, .desc-html ol { margin: 0 0 8px; padding-left: 22px; } .desc-html a { color: #1a8fbf; word-break: break-word; }`;
+  // Wire a toolbar to the editor beside it (both under `root`). execCommand runs on the focused contenteditable.
+  function wireRte(root) {
+    const bar = root.querySelector('.rtebar'), ed = root.querySelector('.rtein');
+    if (!bar || !ed || bar.dataset.wired) return;
+    bar.dataset.wired = '1';
+    bar.addEventListener('mousedown', e => {
+      const b = e.target.closest('button[data-cmd]'); if (!b) return;
+      e.preventDefault(); // keep the selection in the editor
+      ed.focus();
+      const cmd = b.dataset.cmd;
+      if (cmd === 'createLink') { const url = prompt('Link address (https://…):', 'https://'); if (url && /^(https?:|mailto:)/i.test(url.trim())) document.execCommand('createLink', false, url.trim()); return; }
+      try { document.execCommand(cmd, false, null); } catch (err) {}
+    });
+  }
   // Topmost Schedule page: "Open in schedule" from an assignment can stack a second copy on top of the first.
   const schedulePage = () => { const all = document.querySelectorAll('page.open[data-aid="projects.schedule.edit2"]'); return all[all.length - 1] || null; };
   const inSchedule = sel => { const pg = schedulePage(); return pg && pg.querySelector(sel); };
@@ -1912,6 +1985,7 @@
       .mgrid label { margin-top: 0; }
       .mgrid > div { padding: 6px 0; font-size: 13px; color: #333; }
       .mgrid .over { color: #b3261e; }
+      ${RTE_CSS}
       .mdesc { white-space: pre-wrap; font-size: 13px; line-height: 1.55; color: #333; background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; max-height: 40vh; overflow-y: auto; }
       .mdesc a { color: #1a8fbf; word-break: break-all; }
       .mnodesc { font-size: 13px; color: #8a6d1a; background: #fffaf0; border: 1px solid #ecd9a6; border-radius: 8px; padding: 10px 12px; }
@@ -2317,21 +2391,20 @@
   function renderModal() {
     const st = board.modal; if (!st || !board.data) return;
     const old = board.root.querySelector('.mbg');
-    if (old) { const ta = old.querySelector('textarea.mta'); if (ta) st.draft = ta.value; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; const ob = old.querySelector('.mbody'); if (ob) st.scrollTop = ob.scrollTop; }
+    if (old) { const ed = old.querySelector('.rtein'); if (ed) st.draftHtml = ed.innerHTML; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; const ob = old.querySelector('.mbody'); if (ob) st.scrollTop = ob.scrollTop; }
     const raw = board.data, ref = st.ref;
     const t = (raw.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
     const tu = ref.tuk ? (raw.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
     const others = (raw.projectTaskUserData || []).filter(x => x.TaskKey === ref.taskKey && x.TaskUserKey !== ref.tuk);
     const statuses = raw.taskUserStatus || [];
     const color = tu ? (STATUS_COLORS[tu.StatusName] || '#d6d6d6') : '#9b9b9b';
-    const desc = (t.Description || '').replace(/<[^>]*>/g, '').trim();
     const canEdit = !!(window.System && System.rights && System.rights.prjedittasks);
     const planned = tu ? +tu.Hours || 0 : 0, actual = tu ? +tu.ActualHours || 0 : 0;
     const statusSel = tu ? `<select class="mstatus" style="--c:${color}">${tu.TaskUserStatusKey > 0 ? '' : '<option value="0" selected>No status</option>'}${statuses.map(x => `<option value="${x.k}" ${x.k === tu.TaskUserStatusKey ? 'selected' : ''}>${esc(x.l)}</option>`).join('')}</select>` : '<span class="b">Not assigned</span>';
     const descHtml = st.editing
-      ? `<textarea class="mta" placeholder="Goal, scope, inputs and links, and what done looks like…">${esc(st.draft)}</textarea>
+      ? `${rteEditor(st.draftHtml != null ? st.draftHtml : descToHtml(st.base))}
          <div class="mrow"><button type="button" class="mbtn primary msave">Save description</button><button type="button" class="mbtn mcancel">Cancel</button><span class="mhint">⌘/Ctrl + Enter to save</span></div>`
-      : desc ? `<div class="mdesc">${linkify(desc)}</div>${canEdit ? '<div class="mrow"><button type="button" class="mlink medit">Edit description</button></div>' : ''}`
+      : descHasText(t.Description) ? `<div class="desc-html">${descToHtml(t.Description)}</div>${canEdit ? '<div class="mrow"><button type="button" class="mlink medit">Edit description</button></div>' : ''}`
       : `<div class="mnodesc">No description yet.${canEdit ? ' <button type="button" class="mlink madd">Add one</button>' : ''} <button type="button" class="mlink mask">Request details in a conversation</button></div>`;
     const todoHtml = renderTodoPanel(ref.taskKey, st);
     const people = others.map(o => `<div class="mp">${avatarHtml(o.UserKey || -1, o.UserName, o.Initials)}<span>${esc((o.UserName || 'Unassigned slot').trim())}<small>${esc(o.StatusName || 'No status')}</small></span></div>`).join('');
@@ -2385,8 +2458,18 @@
     }
     // Keep the body's scroll position when the modal redraws (e.g. when to-dos finish loading).
     if (st.scrollTop) { const nb = board.root.querySelector('.mbody'); if (nb) nb.scrollTop = st.scrollTop; }
-    const ta = board.root.querySelector('.mta');
-    if (ta && st.editing) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    if (st.editing) {
+      const rte = board.root.querySelector('.rte');
+      if (rte) {
+        wireRte(rte);
+        const ed = rte.querySelector('.rtein');
+        if (ed) {
+          ed.setAttribute('data-ph', 'Goal, scope, inputs and links, and what done looks like…');
+          ed.focus();
+          try { const rg = document.createRange(); rg.selectNodeContents(ed); rg.collapse(false); const se = window.getSelection(); se.removeAllRanges(); se.addRange(rg); } catch (e) {}
+        }
+      }
+    }
     else if (st.focusTodo) { const ti = board.root.querySelector('.tdnew'); if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); } st.focusTodo = false; }
     const sel = board.root.querySelector('.mstatus');
     if (sel) sel.addEventListener('change', () => moveAssignment(ref.tuk, Number(sel.value)));
@@ -2503,8 +2586,8 @@
     if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
     if (t.classList.contains('mcopya')) { copy(urls.assignment(ref.tuk), 'assignment link'); return; }
-    if (t.classList.contains('madd')) { st.editing = true; st.draft = ''; st.base = ''; st.msg = ''; renderModal(); return; }
-    if (t.classList.contains('medit')) { st.editing = true; st.base = task.Description || ''; st.draft = String(st.base).replace(/<[^>]*>/g, ''); st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('madd')) { st.editing = true; st.draftHtml = ''; st.base = ''; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('medit')) { st.editing = true; st.base = task.Description || ''; st.draftHtml = null; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mcancel')) { st.editing = false; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('medue')) { st.editingDue = true; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mduecancel')) { st.editingDue = false; st.msg = ''; renderModal(); return; }
@@ -2532,13 +2615,13 @@
       return;
     }
     if (t.classList.contains('msave')) {
-      const ta = board.root.querySelector('.mta'); const text = (ta && ta.value || '').trim();
-      if (!text) { st.msg = 'Type a description first.'; st.draft = ''; renderModal(); return; }
+      const html = rteRead(board.root.querySelector('.rte') || board.root);
+      if (!descHasText(html)) { st.msg = 'Type a description first.'; st.draftHtml = ''; renderModal(); return; }
       t.disabled = true; t.textContent = 'Saving…';
       try {
-        await saveTaskDescription(board.projectKey, ref.taskKey, text, st.base || '');
-        task.Description = text; st.editing = false; st.msg = ''; toast('Description saved');
-      } catch (err) { st.msg = 'Could not save: ' + (err && err.message || err); st.draft = text; }
+        await saveTaskDescription(board.projectKey, ref.taskKey, html, st.base || '');
+        task.Description = html; st.editing = false; st.msg = ''; toast('Description saved');
+      } catch (err) { st.msg = 'Could not save: ' + (err && err.message || err); st.draftHtml = html; }
       renderBoard();
     }
   }
