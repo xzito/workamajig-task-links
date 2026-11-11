@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.37.0';
+  const VERSION = '0.38.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1319,7 +1319,7 @@
   const STATUS_COLORS = { 'Backlog': '#C2C2C2', 'Ready': '#B3DC6C', 'In Progress': '#16A765', 'Ready for Review/Blocked': '#F83A22', 'Completed': '#A47AE2' };
   const FALLBACK_COLORS = ['#7aa7d9', '#e0a82e', '#d07ad9', '#5cc2c2', '#9b9b9b'];
   const board = { on: false, host: null, root: null, toggle: null, projectKey: null, data: null, user: 0, search: '',
-    showCompleted: false, timer: null, dirty: false, drag: null, seq: 0 };
+    showCompleted: false, timer: null, dirty: false, drag: null, seq: 0, view: 'board', calShow: false, calExpand: null };
   const COLLAPSE_PREF = 'wjl.boardCollapsed';
   board.collapsed = (() => { try { return JSON.parse(localStorage.getItem(COLLAPSE_PREF) || '{}') || {}; } catch (e) { return {}; } })();
   const saveCollapsed = () => { try { localStorage.setItem(COLLAPSE_PREF, JSON.stringify(board.collapsed)); } catch (e) {} };
@@ -1445,8 +1445,8 @@
       button.on { background: #333; color: #fff; font-weight: 600; }
     </style><div class="seg" title="Switch between the schedule list and a status board"><button type="button" class="list">List</button><button type="button" class="board">Board</button>${calEnabled() ? '<button type="button" class="cal" title="Open a calendar of tasks by due date">Calendar</button>' : ''}</div>`;
     r.querySelector('.list').addEventListener('click', () => { setBoardPref(false); closeBoard(); });
-    r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); closeListHygiene(); openBoard(); });
-    if (calEnabled()) { const cb = r.querySelector('.cal'); if (cb) cb.addEventListener('click', openCalendar); }
+    r.querySelector('.board').addEventListener('click', () => { setBoardPref(true); closeListHygiene(); switchView('board'); });
+    if (calEnabled()) { const cb = r.querySelector('.cal'); if (cb) cb.addEventListener('click', () => { closeListHygiene(); switchView('calendar'); }); }
     ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
     if (spacer) spacer.insertAdjacentElement('afterend', host); else fallback.parentElement.insertBefore(host, fallback);
     board.seg = host;
@@ -1772,7 +1772,8 @@
     if (board.seg) {
       const s = board.seg.shadowRoot;
       s.querySelector('.list').classList.toggle('on', !board.on);
-      s.querySelector('.board').classList.toggle('on', board.on);
+      s.querySelector('.board').classList.toggle('on', board.on && board.view === 'board');
+      const c = s.querySelector('.cal'); if (c) c.classList.toggle('on', board.on && board.view === 'calendar');
     }
     if (!board.toggle) return;
     const r = board.toggle.shadowRoot;
@@ -1793,6 +1794,14 @@
     st.textContent = hidden
       ? 'page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleTemplates"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleSide"],page.open[data-aid="projects.schedule.edit2"] div.input-control.lookup:has(> input[data-source="colSets"]){display:none!important}'
       : '';
+  }
+
+  // Switch the overlay between the status board and the calendar (both inline, same overlay). List closes the overlay.
+  function switchView(v) {
+    board.view = v;
+    board.calExpand = null;
+    if (board.on) { renderBoard(); syncToggle(); }
+    else openBoard();
   }
 
   function openBoard() {
@@ -1907,6 +1916,28 @@
       .b.cvb.unread { background: #534ab7; color: #fff; }
       .icon { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; color: #555; }
       .cols { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 12px 2px 4px; }
+      .calnav { display: inline-flex; gap: 4px; }
+      .calmonth { font-size: 15px; color: #222; margin: 0 6px; }
+      .calhint { font-size: 11px; color: #999; }
+      .calgrid { flex: 1; display: flex; flex-direction: column; min-height: 0; width: 100%; }
+      .cdows { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid #ececf1; }
+      .cdow { padding: 6px 8px; font-size: 11px; color: #8a8a98; text-transform: uppercase; letter-spacing: .04em; }
+      .cweeks { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(92px, 1fr); overflow: auto; }
+      .ccell { border-right: 1px solid #f0f0f4; border-bottom: 1px solid #f0f0f4; padding: 4px 5px; display: flex; flex-direction: column; gap: 3px; min-height: 0; overflow: hidden; }
+      .ccell.out { background: #fafafb; }
+      .ccell.drop { background: #eef6ff; outline: 2px solid #2b6cb0; outline-offset: -2px; }
+      .cdn { font-size: 12px; color: #666; align-self: flex-end; flex: none; }
+      .ccell.out .cdn { color: #c4c4cc; }
+      .ccell.today .cdn { background: #2b6cb0; color: #fff; border-radius: 50%; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; }
+      .cchips { display: flex; flex-direction: column; gap: 3px; overflow: hidden; min-height: 0; }
+      .ccell.exp .cchips { overflow: auto; }
+      .calchip { font-size: 11px; line-height: 1.25; padding: 2px 6px; border-radius: 5px; background: #eef1f6; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid #9aa7bd; cursor: grab; flex: none; }
+      .calchip:hover { background: #e4e9f1; }
+      .calchip.ov { background: #fdecec; border-left-color: #e5484d; color: #a11111; }
+      .calchip.done { background: #eef4ee; border-left-color: #8bbf8b; color: #4a7a4a; text-decoration: line-through; }
+      .calchip.dragging { opacity: .4; }
+      .calmore { font-size: 10px; color: #2b6cb0; padding-left: 4px; cursor: pointer; flex: none; }
+      .calmore:hover { text-decoration: underline; }
       .col { flex: 0 0 280px; width: 280px; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
       .col.collapsed { flex-basis: 52px; width: 52px; cursor: pointer; }
       .col.drop { border-color: var(--c); }
@@ -2024,7 +2055,7 @@
       const sp = document.createElement('span'); sp.className = 'av'; sp.style.background = '#8a9bab'; sp.textContent = img.dataset.ini || '?';
       img.replaceWith(sp);
     }, true);
-    root.addEventListener('change', e => { if (e.target.classList.contains('hopt')) { setHygCountPref(e.target.dataset.opt, e.target.checked); renderBoard(); return; } if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); return; } if (e.target.classList.contains('onlytd')) { board.onlyTodos = e.target.checked; renderBoard(); return; } if (e.target.classList.contains('onlycv')) { board.onlyConv = e.target.checked; renderBoard(); } });
+    root.addEventListener('change', e => { if (e.target.classList.contains('calshow')) { board.calShow = e.target.checked; renderBoard(); return; } if (e.target.classList.contains('hopt')) { setHygCountPref(e.target.dataset.opt, e.target.checked); renderBoard(); return; } if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); return; } if (e.target.classList.contains('onlytd')) { board.onlyTodos = e.target.checked; renderBoard(); return; } if (e.target.classList.contains('onlycv')) { board.onlyConv = e.target.checked; renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
     root.addEventListener('mousedown', onCardMouseDown);
@@ -2131,7 +2162,7 @@
 
   // ---------- Calendar view (project tasks by due date; a modal over the schedule, ClickUp/Asana style) ----------
   function calEnabled() { return true; }
-  const cal = { host: null, root: null, month: null, pk: null, data: null, err: '', hideDone: false, seq: 0 };
+  const cal = { month: null };
   const CAL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const CAL_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const calYmd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -2153,92 +2184,10 @@
     const days = []; for (let i = 0; i < 42; i++) { const d = new Date(start); d.setDate(start.getDate() + i); days.push(d); }
     return days;
   }
-  function buildCalHost() {
-    const host = document.createElement('div');
-    host.id = 'wjl-cal';
-    host.style.cssText = 'position:fixed;inset:0;z-index:2147483600;display:none';
-    const r = host.attachShadow({ mode: 'open' });
-    r.innerHTML = `<style>
-      :host { all: initial; font-family: inherit; color-scheme: light; }
-      * { box-sizing: border-box; font-family: inherit; }
-      .bg { position: absolute; inset: 0; background: rgba(20,20,30,.45); }
-      .panel { position: absolute; inset: 4vh 4vw; background: #fff; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.3); display: flex; flex-direction: column; overflow: hidden; }
-      .top { display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid #ececf1; flex-wrap: wrap; }
-      .top h2 { margin: 0; font-size: 16px; font-weight: 700; color: #222; min-width: 170px; }
-      .top .sub { color: #8a8a98; font-size: 12px; }
-      .nav { display: inline-flex; gap: 4px; }
-      button { font: inherit; font-size: 13px; border: 1px solid #cfcfcf; background: #fff; color: #333; border-radius: 8px; padding: 6px 11px; cursor: pointer; line-height: 1; }
-      button:hover { background: #f5f5f8; }
-      .x { margin-left: auto; border: 0; font-size: 20px; padding: 2px 10px; }
-      label.hd { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #555; cursor: pointer; }
-      .grid { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-      .dow { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid #ececf1; }
-      .dow span { padding: 6px 8px; font-size: 11px; color: #8a8a98; text-transform: uppercase; letter-spacing: .04em; }
-      .weeks { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(92px, 1fr); overflow: auto; }
-      .cell { border-right: 1px solid #f0f0f4; border-bottom: 1px solid #f0f0f4; padding: 4px 5px; overflow: hidden; display: flex; flex-direction: column; gap: 3px; }
-      .cell .dn { font-size: 12px; color: #666; align-self: flex-end; }
-      .cell.out { background: #fafafb; }
-      .cell.out .dn { color: #c4c4cc; }
-      .cell.today .dn { background: #2b6cb0; color: #fff; border-radius: 50%; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; }
-      a.chip { display: block; font-size: 11px; line-height: 1.25; padding: 2px 5px; border-radius: 5px; background: #eef1f6; color: #333; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid #9aa7bd; }
-      a.chip:hover { background: #e4e9f1; }
-      a.chip.ov { background: #fdecec; border-left-color: #e5484d; color: #a11111; }
-      a.chip.done { background: #eef4ee; border-left-color: #8bbf8b; color: #4a7a4a; text-decoration: line-through; }
-      .more { font-size: 10px; color: #8a8a98; padding-left: 4px; }
-      .empty { grid-column: 1/8; padding: 40px; text-align: center; color: #8a8a98; }
-    </style><div class="bg"></div><div class="panel"><div class="top"></div><div class="grid"><div class="dow">${CAL_DOW.map(d => `<span>${d}</span>`).join('')}</div><div class="weeks"></div></div></div>`;
-    r.querySelector('.bg').addEventListener('click', closeCalendar);
-    r.addEventListener('click', e => {
-      const t = e.target;
-      if (t.classList.contains('x')) return closeCalendar();
-      if (t.classList.contains('prev')) { cal.month.setMonth(cal.month.getMonth() - 1); return renderCalendar(); }
-      if (t.classList.contains('next')) { cal.month.setMonth(cal.month.getMonth() + 1); return renderCalendar(); }
-      if (t.classList.contains('todaybtn')) { const n = new Date(); cal.month = new Date(n.getFullYear(), n.getMonth(), 1); return renderCalendar(); }
-    });
-    r.addEventListener('change', e => { if (e.target.classList.contains('hdchk')) { cal.hideDone = e.target.checked; renderCalendar(); } });
-    ['click', 'mousedown', 'keydown'].forEach(t => host.addEventListener(t, e => e.stopPropagation()));
-    document.addEventListener('keydown', e => { if (e.key === 'Escape' && cal.host && cal.host.style.display === 'block') { e.stopPropagation(); closeCalendar(); } }, true);
-    document.body.appendChild(host);
-    cal.host = host; cal.root = r;
-  }
-  async function openCalendar() {
-    const pk = qs().get('k'); if (!pk) return;
-    if (!cal.host) buildCalHost();
-    const seq = ++cal.seq;
-    cal.pk = pk; cal.err = '';
-    if (!cal.month) { const n = new Date(); cal.month = new Date(n.getFullYear(), n.getMonth(), 1); }
-    cal.host.style.display = 'block';
-    renderCalendar();
-    try { const s = await getSchedule(pk); if (seq === cal.seq) { cal.data = s.raw; renderCalendar(); } }
-    catch (e) { if (seq === cal.seq) { cal.err = String(e && e.message || e); renderCalendar(); } }
-  }
-  function closeCalendar() { if (cal.host) cal.host.style.display = 'none'; }
-  function renderCalendar() {
-    if (!cal.root) return;
-    const r = cal.root;
-    const h1 = document.querySelector('page.open[data-aid="projects.schedule.edit2"] header h1, page.open[data-aid="projects.schedule.edit2"] header h2');
-    const projName = (h1 && h1.textContent || '').trim();
-    r.querySelector('.top').innerHTML = `<h2>${esc(CAL_MONTHS[cal.month.getMonth()])} ${cal.month.getFullYear()}</h2>`
-      + `<span class="nav"><button type="button" class="prev" title="Previous month">‹</button><button type="button" class="todaybtn">Today</button><button type="button" class="next" title="Next month">›</button></span>`
-      + `<span class="sub">${esc(projName)}</span>`
-      + `<label class="hd"><input type="checkbox" class="hdchk" ${cal.hideDone ? 'checked' : ''}> Hide completed</label>`
-      + `<button type="button" class="x" title="Close">×</button>`;
-    const weeks = r.querySelector('.weeks');
-    if (cal.err) { weeks.innerHTML = `<div class="empty">Could not load the schedule: ${esc(cal.err)}</div>`; return; }
-    if (!cal.data) { weeks.innerHTML = `<div class="empty">Loading…</div>`; return; }
-    const byDate = new Map();
-    for (const t of calTasks(cal.data)) { if (cal.hideDone && t.done) continue; if (!byDate.has(t.date)) byDate.set(t.date, []); byDate.get(t.date).push(t); }
-    const today = calYmd(new Date());
-    weeks.innerHTML = calMonthDays(cal.month).map(d => {
-      const key = calYmd(d), inMonth = d.getMonth() === cal.month.getMonth(), list = byDate.get(key) || [], shown = list.slice(0, 4);
-      const chips = shown.map(t => `<a class="chip ${t.overdue ? 'ov' : ''} ${t.done ? 'done' : ''}" href="${urls.task(cal.pk, t.taskKey)}" target="_blank" rel="noopener" title="${esc((t.taskId ? t.taskId + ' · ' : '') + t.name + (t.group ? ' — ' + t.group : ''))}">${esc(t.name)}</a>`).join('');
-      const more = list.length > shown.length ? `<div class="more">+${list.length - shown.length} more</div>` : '';
-      return `<div class="cell ${inMonth ? '' : 'out'} ${key === today ? 'today' : ''}"><span class="dn">${d.getDate()}</span>${chips}${more}</div>`;
-    }).join('');
-  }
 
   function renderBoard() {
     if (!board.root || !board.data) return;
+    if (board.view === 'calendar') return renderCalendarView();
     const m = boardModel();
     // Toolbar: people chips (open work only), search, show completed, refresh.
     // Chip counts = open assignments that pass the other active filters (description, search), so numbers match the board.
@@ -2276,6 +2225,36 @@
     board.model = m;
     renderColumns();
     if (board.modal) renderModal();
+  }
+
+  // Calendar as an inline board view: month nav in the toolbar, a month grid in place of the columns. Clicking a task
+  // opens the same card modal as the board; dragging it to another day changes its due date.
+  function renderCalendarView() {
+    if (!cal.month) { const n = new Date(); cal.month = new Date(n.getFullYear(), n.getMonth(), 1); }
+    const bar = board.root.querySelector('.bar');
+    bar.innerHTML = `<span class="calnav"><button type="button" class="icon calprev" title="Previous month">‹</button><button type="button" class="icon caltoday">Today</button><button type="button" class="icon calnext" title="Next month">›</button></span>`
+      + `<strong class="calmonth">${esc(CAL_MONTHS[cal.month.getMonth()])} ${cal.month.getFullYear()}</strong>`
+      + `<label class="chk"><input type="checkbox" class="calshow" ${board.calShow ? 'checked' : ''}> Show completed</label>`
+      + `<span class="calhint">Drag a task to change its due date · click to open</span>`
+      + `<button type="button" class="icon refresh" style="margin-left:auto" title="Reload from Workamajig">↻</button>`;
+    board.root.querySelector('.cols').innerHTML = calGridHtml();
+    if (board.modal) renderModal();
+  }
+  function calGridHtml() {
+    const byDate = new Map();
+    for (const t of calTasks(board.data)) { if (!board.calShow && t.done) continue; if (!byDate.has(t.date)) byDate.set(t.date, []); byDate.get(t.date).push(t); }
+    const today = calYmd(new Date());
+    const dows = CAL_DOW.map(d => `<div class="cdow">${d}</div>`).join('');
+    const cells = calMonthDays(cal.month).map(d => {
+      const key = calYmd(d), inMonth = d.getMonth() === cal.month.getMonth();
+      const list = (byDate.get(key) || []).slice().sort((a, b) => (a.taskId || '').localeCompare(b.taskId || '', undefined, { numeric: true }));
+      const expanded = board.calExpand === key;
+      const shown = expanded ? list : list.slice(0, 4);
+      const chips = shown.map(t => `<div class="calchip ${t.overdue ? 'ov' : ''} ${t.done ? 'done' : ''}" data-task="${t.taskKey}" title="${esc((t.taskId ? t.taskId + ' · ' : '') + t.name + (t.group ? ' — ' + t.group : ''))}">${esc(t.name)}</div>`).join('');
+      const more = (!expanded && list.length > shown.length) ? `<div class="calmore" data-date="${key}">+${list.length - shown.length} more</div>` : '';
+      return `<div class="ccell ${inMonth ? '' : 'out'} ${key === today ? 'today' : ''} ${expanded ? 'exp' : ''}" data-date="${key}"><span class="cdn">${d.getDate()}</span><div class="cchips">${chips}${more}</div></div>`;
+    }).join('');
+    return `<div class="calgrid"><div class="cdows">${dows}</div><div class="cweeks">${cells}</div></div>`;
   }
 
   function renderColumns() {
@@ -2347,6 +2326,11 @@
     const t = e.target;
     if (board.justDragged) { e.preventDefault(); e.stopPropagation(); board.justDragged = false; return; }
     if (t.closest && t.closest('.mbg')) { onModalClick(e); return; }
+    if (t.classList.contains('calprev')) { cal.month.setMonth(cal.month.getMonth() - 1); board.calExpand = null; renderBoard(); return; }
+    if (t.classList.contains('calnext')) { cal.month.setMonth(cal.month.getMonth() + 1); board.calExpand = null; renderBoard(); return; }
+    if (t.classList.contains('caltoday')) { const n = new Date(); cal.month = new Date(n.getFullYear(), n.getMonth(), 1); board.calExpand = null; renderBoard(); return; }
+    if (t.classList.contains('calmore')) { board.calExpand = t.dataset.date; renderBoard(); return; }
+    { const cc = t.closest && t.closest('.calchip'); if (cc) { const tk = Number(cc.dataset.task); const slot = (board.data.projectTaskUserData || []).find(x => x.TaskKey === tk && x.UserKey > 0); openModal({ taskKey: tk, tuk: slot ? slot.TaskUserKey : 0 }); return; } }
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
@@ -2690,8 +2674,52 @@
   }
 
   // ---- drag and drop (mouse events) ----
+  // Drag a calendar task to another day → change its due date (saveTaskDueDate). Mirrors the board's card drag.
+  function startCalDrag(e, chip) {
+    const taskKey = Number(chip.dataset.task);
+    const fromDate = (chip.closest('.ccell') || {}).dataset ? chip.closest('.ccell').dataset.date : null;
+    const start = { x: e.clientX, y: e.clientY };
+    const r = chip.getBoundingClientRect();
+    let ghost = null, overCell = null;
+    const cellAt = (x, y) => { const el = board.root.elementFromPoint(x, y); return el && el.closest && el.closest('.ccell'); };
+    const move = ev => {
+      if (!ghost) {
+        if (Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 6) return;
+        ghost = chip.cloneNode(true);
+        Object.assign(ghost.style, { position: 'fixed', left: r.left + 'px', top: r.top + 'px', width: Math.max(140, r.width) + 'px', margin: '0', zIndex: '30', pointerEvents: 'none', boxShadow: '0 8px 20px rgba(0,0,0,.22)', opacity: '.95' });
+        board.root.querySelector('.wrap').appendChild(ghost);
+        chip.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+      }
+      ev.preventDefault();
+      ghost.style.left = (r.left + ev.clientX - start.x) + 'px';
+      ghost.style.top = (r.top + ev.clientY - start.y) + 'px';
+      const cell = cellAt(ev.clientX, ev.clientY);
+      if (cell !== overCell) { if (overCell) overCell.classList.remove('drop'); overCell = cell; if (cell) cell.classList.add('drop'); }
+    };
+    const up = async ev => {
+      window.removeEventListener('mousemove', move, true);
+      window.removeEventListener('mouseup', up, true);
+      document.body.style.userSelect = '';
+      if (!ghost) return; // no drag started → it's a click, handled by onBoardClick
+      ghost.remove(); chip.classList.remove('dragging');
+      if (overCell) overCell.classList.remove('drop');
+      board.justDragged = true; setTimeout(() => { board.justDragged = false; }, 0);
+      const cell = cellAt(ev.clientX, ev.clientY);
+      const date = cell && cell.dataset.date;
+      if (!date || date === fromDate) return;
+      chip.style.opacity = '.5';
+      try { await saveTaskDueDate(board.projectKey, taskKey, date); toast('Due date updated'); await loadBoard(); }
+      catch (err) { chip.style.opacity = ''; toast('Could not move: ' + (err && err.message || err)); }
+    };
+    window.addEventListener('mousemove', move, true);
+    window.addEventListener('mouseup', up, true);
+  }
+
   function onCardMouseDown(e) {
     if (e.button !== 0) return;
+    const chip = e.target.closest && e.target.closest('.calchip');
+    if (chip) { startCalDrag(e, chip); return; }
     const card = e.target.closest && e.target.closest('.card[data-tuk]');
     if (!card || e.target.closest('.more')) return;
     const start = { x: e.clientX, y: e.clientY };
