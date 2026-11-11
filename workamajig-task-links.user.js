@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.31.0';
+  const VERSION = '0.32.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -1408,7 +1408,7 @@
   function listHygieneItems(m) {
     const per = {};
     HYGIENE.forEach(h => {
-      const rows = m.cards.filter(c => !c.done && h.card(c)).map(c => ({ taskKey: c.taskKey, taskId: c.taskId, taskName: c.taskName, group: c.group, order: c.order, who: c.userKey > 0 ? c.user : 'Empty assignment slot' }))
+      const rows = m.cards.filter(c => hygInScope(c) && h.card(c)).map(c => ({ taskKey: c.taskKey, taskId: c.taskId, taskName: c.taskName, group: c.group, order: c.order, who: c.userKey > 0 ? c.user : 'Empty assignment slot' }))
         .concat(m.unassigned.filter(t => h.task(t)).map(t => ({ taskKey: t.taskKey, taskId: t.taskId, taskName: t.taskName, group: t.group, order: t.order, who: 'Nobody assigned' })));
       rows.sort((a, b) => a.order - b.order);
       per[h.key] = rows;
@@ -1442,10 +1442,16 @@
     if (!m) { menu.innerHTML = `<div class="msg">${listHyg.err ? 'Could not load the schedule: ' + esc(listHyg.err) : 'Loading…'}</div>`; return; }
     const per = listHygieneItems(m);
     const act = listFilter && listFilter.kind === 'hyg' ? listFilter.key : null;
+    const cp = hygCountPrefs(), nhc = nativeHideCompleted();
+    const opts = `<div class="hopts" style="border-top:1px solid #ececec;margin-top:4px;padding:7px 12px;display:flex;flex-direction:column;gap:4px;font-size:12px;color:#555">`
+      + `<label style="display:flex;align-items:center;gap:7px;cursor:${nhc ? 'default' : 'pointer'};${nhc ? 'opacity:.55' : ''}"><input type="checkbox" class="hopt" data-opt="completed" ${cp.completed && !nhc ? 'checked' : ''} ${nhc ? 'disabled' : ''}> Count completed tasks</label>`
+      + `<label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" class="hopt" data-opt="summaries" ${cp.summaries ? 'checked' : ''}> Count summary tasks</label>`
+      + (nhc ? `<small style="color:#999">Workamajig’s “Hide Completed Tasks” is on, so completed tasks stay out.</small>` : '')
+      + `</div>`;
     menu.innerHTML = `<div class="htitle">Filter the list to open work that has…</div>` + HYGIENE.map(h => {
       const n = per[h.key].length;
       return `<button type="button" class="hrow ${act === h.key ? 'act' : ''}" data-k="${h.key}" ${n ? '' : 'disabled'}><span class="caret">${act === h.key ? '✓' : ''}</span><span class="hl">${h.label}<small>${h.hint}</small></span><span class="hc">${n}</span></button>`;
-    }).join('') + `<div class="hfoot">${act ? '<button type="button" class="fx2">Clear filter</button>' : 'Click an issue to show only those tasks.'}</div>`;
+    }).join('') + opts + `<div class="hfoot">${act ? '<button type="button" class="fx2">Clear filter</button>' : 'Click an issue to show only those tasks.'}</div>`;
   }
 
   // Conversations menu: filter the list to tasks with conversations, or with unread posts.
@@ -1557,6 +1563,16 @@
   function listHygKey(e) { if (e.key === 'Escape') closeListHygiene(); }
 
   function onListHygieneClick(e) {
+    if (e.target.classList && e.target.classList.contains('hopt')) {
+      setHygCountPref(e.target.dataset.opt, e.target.checked);
+      // If a hygiene filter is currently applied, re-apply it with the new scope so the list updates too.
+      if (listFilter && listFilter.kind === 'hyg' && listHyg.model) {
+        const key = listFilter.key, h = HYGIENE.find(x => x.key === key);
+        if (h) applyListFilter('hyg', key, h.label, listHygieneItems(listHyg.model)[key].map(x => x.taskKey));
+      }
+      renderListHygiene();
+      return;
+    }
     const t = e.target.closest('button');
     if (!t || t.disabled) return;
     if (t.classList.contains('fx2')) { clearListFilter(); closeListHygiene(); return; }
@@ -1829,7 +1845,7 @@
       const sp = document.createElement('span'); sp.className = 'av'; sp.style.background = '#8a9bab'; sp.textContent = img.dataset.ini || '?';
       img.replaceWith(sp);
     }, true);
-    root.addEventListener('change', e => { if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); return; } if (e.target.classList.contains('onlytd')) { board.onlyTodos = e.target.checked; renderBoard(); return; } if (e.target.classList.contains('onlycv')) { board.onlyConv = e.target.checked; renderBoard(); } });
+    root.addEventListener('change', e => { if (e.target.classList.contains('hopt')) { setHygCountPref(e.target.dataset.opt, e.target.checked); renderBoard(); return; } if (e.target.classList.contains('hchk')) { const k = e.target.dataset.k; if (e.target.checked) board.hyg.add(k); else board.hyg.delete(k); renderBoard(); return; } if (e.target.classList.contains('showc')) { board.collapsed['Completed'] = !e.target.checked; saveCollapsed(); renderBoard(); return; } if (e.target.classList.contains('onlytd')) { board.onlyTodos = e.target.checked; renderBoard(); return; } if (e.target.classList.contains('onlycv')) { board.onlyConv = e.target.checked; renderBoard(); } });
     // Mouse-driven drag (native HTML5 drag on links drags the URL instead, and is unreliable inside shadow roots).
     root.addEventListener('dragstart', e => e.preventDefault());
     root.addEventListener('mousedown', onCardMouseDown);
@@ -1875,9 +1891,27 @@
   board.hyg = new Set();
   const issuesOf = (item, isTask) => HYGIENE.filter(h => (isTask ? h.task(item) : h.card(item))).map(h => h.key);
   const hygPass = (item, isTask) => !board.hyg.size || issuesOf(item, isTask).some(k => board.hyg.has(k));
+
+  // Which rows the hygiene tally includes. Completed and summary rows are left out by default — completed work isn't an
+  // open problem, and a summary would double-count the children beneath it — but a PM can switch either back on (saved
+  // per browser). When Workamajig's own "Hide Completed Tasks" is on, completed rows aren't on screen, so they stay out
+  // regardless, keeping the hygiene numbers in step with what the list shows.
+  const HYG_COUNT_KEY = 'wjl.hygiene.counting';
+  function hygCountPrefs() { try { return JSON.parse(localStorage.getItem(HYG_COUNT_KEY)) || {}; } catch (e) { return {}; } }
+  function setHygCountPref(k, v) { const p = hygCountPrefs(); p[k] = !!v; try { localStorage.setItem(HYG_COUNT_KEY, JSON.stringify(p)); } catch (e) {} }
+  function nativeHideCompleted() {
+    const pg = schedulePage(); const mo = pg && pg.view && pg.view.module && pg.view.module.model;
+    return !!(mo && mo.searchTasks && mo.searchTasks.si && Number(mo.searchTasks.si.hideCompleted) === 1);
+  }
+  // Does this card/open task belong in the hygiene tally? (cards carry .completed/.summary; unassigned items are open leaves)
+  function hygInScope(item) {
+    if (item.summary && !hygCountPrefs().summaries) return false;
+    if (item.completed && !(hygCountPrefs().completed && !nativeHideCompleted())) return false;
+    return true;
+  }
   // Counts over the whole project's open work: per issue, and items with at least one issue.
   function hygieneCounts(m) {
-    const items = m.cards.filter(c => !c.done).map(c => issuesOf(c, false)).concat(m.unassigned.map(t => issuesOf(t, true)));
+    const items = m.cards.filter(hygInScope).map(c => issuesOf(c, false)).concat(m.unassigned.map(t => issuesOf(t, true)));
     const per = {}; HYGIENE.forEach(h => { per[h.key] = items.filter(i => i.includes(h.key)).length; });
     return { per, total: items.filter(i => i.length).length };
   }
@@ -1899,10 +1933,12 @@
       const t = tasks.get(tu.TaskKey) || {};
       const status = tu.TaskUserStatusKey > 0 ? tu.TaskUserStatusKey : 0;
       const done = status === COMPLETED_KEY || (!status && (+tu.PercComp >= 100 || !!tu.ActComplete));
+      // Completion regardless of status: a task can be 100% / actually complete while still carrying a work status.
+      const completed = status === COMPLETED_KEY || +tu.PercComp >= 100 || !!tu.ActComplete;
       const dueRaw = tu.APlanComplete || t.PlanComplete;
       const due = dueRaw ? new Date(String(dueRaw).slice(0, 10) + 'T00:00:00') : null;
       const days = due ? Math.round((due - today) / 864e5) : null;
-      return { tuk: tu.TaskUserKey, taskKey: tu.TaskKey, status, done, user: (tu.UserName || '').trim(), userKey: tu.UserKey || -1,
+      return { tuk: tu.TaskUserKey, taskKey: tu.TaskKey, status, done, completed, summary: parents.has(tu.TaskKey), user: (tu.UserName || '').trim(), userKey: tu.UserKey || -1,
         initials: tu.Initials || '', service: tu.ServiceDescription || '', actual: +tu.ActualHours || 0, planned: +tu.Hours || 0,
         pc: +tu.PercComp || 0, due, days, taskId: t.TaskID || '', taskName: t.TaskName || '(task)', group: t.SummaryTaskName || '', order: t.ProjectOrder || 0, noDesc: !hasDesc(t) };
     });
@@ -1935,9 +1971,10 @@
       <label class="chk" title="Only tasks that have at least one conversation"><input type="checkbox" class="onlycv" ${board.onlyConv ? 'checked' : ''}> Has conversations</label>
       <button type="button" class="icon collapse-all" title="Collapse every column">Collapse all</button>
       <button type="button" class="icon expand-all" title="Expand every column">Expand all</button>
-      ${(() => { const hc = hygieneCounts(m); board.hygCounts = hc; return `<span class="hwrap"><button type="button" class="icon hyg ${board.hyg.size ? 'on' : ''}" title="Project hygiene: find open work with problems">Hygiene <span class="n">${hc.total}</span> ▾</button>${board.hygOpen ? `<div class="hmenu">
+      ${(() => { const hc = hygieneCounts(m); board.hygCounts = hc; const cpB = hygCountPrefs(), nhcB = nativeHideCompleted(); return `<span class="hwrap"><button type="button" class="icon hyg ${board.hyg.size ? 'on' : ''}" title="Project hygiene: find open work with problems">Hygiene <span class="n">${hc.total}</span> ▾</button>${board.hygOpen ? `<div class="hmenu">
         <div class="htitle">Show open work that has…</div>
         ${HYGIENE.map(h => `<label class="hrow"><input type="checkbox" class="hchk" data-k="${h.key}" ${board.hyg.has(h.key) ? 'checked' : ''}><span class="hl">${h.label}<small>${h.hint}</small></span><span class="hc">${hc.per[h.key]}</span></label>`).join('')}
+        <div class="hopts" style="border-top:1px solid #ececec;margin-top:4px;padding:7px 12px;display:flex;flex-direction:column;gap:4px;font-size:12px;color:#555"><label style="display:flex;align-items:center;gap:7px;cursor:${nhcB ? 'default' : 'pointer'};${nhcB ? 'opacity:.55' : ''}"><input type="checkbox" class="hopt" data-opt="completed" ${cpB.completed && !nhcB ? 'checked' : ''} ${nhcB ? 'disabled' : ''}> Count completed tasks</label><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" class="hopt" data-opt="summaries" ${cpB.summaries ? 'checked' : ''}> Count summary tasks</label>${nhcB ? `<small style="color:#999">Workamajig’s “Hide Completed Tasks” is on, so completed tasks stay out.</small>` : ''}</div>
         <div class="hfoot"><button type="button" class="mlink hall">Any issue</button><button type="button" class="mlink hnone">Clear</button></div></div>` : ''}</span>`; })()}
       <button type="button" class="icon refresh" style="margin-left:auto" title="Reload from Workamajig">↻</button>
       ${(() => {
@@ -2649,6 +2686,7 @@
     searchTick();
   }
   function start() {
+    if (window.__MPM_TOOLKIT__) return; // the MagicusPM extension is handling this page; don't double-run
     document.addEventListener('mouseover', onOver, true);
     document.addEventListener('click', onNativeMenuClick, true);
     document.addEventListener('scroll', () => { if (btn && !menu) btn.style.display = 'none'; }, true);
