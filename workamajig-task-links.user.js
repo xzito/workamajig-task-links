@@ -16,7 +16,7 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'wjl.pendingTask';
   const SS_POST = 'wjl.pendingPost';
-  const VERSION = '0.40.0';
+  const VERSION = '0.41.0';
   window.WJL_VERSION = VERSION;
   try { console.info('[wjl] Workamajig Task Links v' + VERSION); } catch (e) {}
 
@@ -791,6 +791,56 @@
     return { PlanStart: row.PlanStart, PlanComplete: row.PlanComplete };
   }
 
+  // Create a brand-new task due on a given day — the same way the schedule's own "insert row" + Save does: a fresh task
+  // row placed in the save envelope's insertedItems (rowstate 'I'), cloning an existing task's full field set so no
+  // required column is missing, then overriding identity / date / budget fields. v1 scope: a top-level task appended at
+  // the end, no status, no assignee — a quick capture from the Calendar view. NOTE (Nov 2026): this is the one schedule
+  // write not yet validated live against a native save; test it on a disposable task before trusting it on real work.
+  async function createTask(projectKey, name, dueYmd) {
+    projectKey = Number(projectKey);
+    name = String(name || '').trim();
+    if (!name) throw new Error('enter a task name');
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
+      projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
+      application: 'wjl createTask', performRecalc: false, fromNotification: false, origData: null
+    });
+    const tasks = sched.tasks || [];
+    // Clone a real leaf task so every column WMJ expects is present and correctly typed; fall back to any row / {}.
+    const tmpl = tasks.find(t => Number(t.TaskType) === 1 && Number(t.SummaryTaskKey) !== 0)
+      || tasks.find(t => Number(t.TaskType) === 1) || tasks[0] || {};
+    const nextOrder = tasks.reduce((m, t) => Math.max(m, Number(t.ProjectOrder) || 0), 0) + 1;
+    const nextDisplay = tasks.reduce((m, t) => Math.max(m, Number(t.DisplayOrder) || 0), 0) + 1;
+    const topNums = tasks.filter(t => !String(t.TaskID || '').includes('.'))
+      .map(t => parseInt(t.TaskID, 10)).filter(n => Number.isFinite(n));
+    const nextId = String((topNums.length ? Math.max.apply(null, topNums) : 0) + 1);
+    const dt = dueYmd + 'T00:00:00';
+    const row = Object.assign({}, tmpl, {
+      TaskKey: -1, ProjectKey: projectKey, TaskID: nextId, TaskName: name, Description: null,
+      TaskType: 1, SummaryTaskKey: 0, TaskLevel: 0, MasterTaskKey: 0,
+      PlanStart: dt, PlanComplete: dt, PlanDuration: 1, BaseStart: null, BaseComplete: null,
+      ActStart: null, ActComplete: null, PercComp: 0, TaskStatus: 1,
+      ScheduleTask: 1, MoneyTask: 0, TrackBudget: 0,
+      EstHours: 0, BudgetLabor: 0, EstLabor: 0, BudgetExpenses: 0, EstExpenses: 0,
+      HourlyRate: 0, Markup: 0, ServiceKey: null, WorkTypeKey: null,
+      ScheduleNote: null, Comments: null, DisplayOrder: nextDisplay, ProjectOrder: nextOrder,
+      ConstraintDate: null, TaskConstraint: 0, TaskAssignmentKey: 0,
+      rowstate: 'I'
+    });
+    const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
+      project, projectKey, tasksDM: { insertedItems: [row], updatedItems: [], deletedItems: [] },
+      taskUsersDM: null, predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      removeProjectUsers: [], addedAssignments: [], tasksFromTemplate: 0,
+      scheduleSessionID: sched.scheduleSessionID, newMods: null, poUpdateList: []
+    }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+    scheduleCache.delete(String(projectKey));
+    return true;
+  }
+
   let lastHref = '';
   // The project manager, as a recipient row: name from the project record, key/email from the project team list.
   async function resolveProjectManager(projectKey) {
@@ -1319,7 +1369,8 @@
   const STATUS_COLORS = { 'Backlog': '#C2C2C2', 'Ready': '#B3DC6C', 'In Progress': '#16A765', 'Ready for Review/Blocked': '#F83A22', 'Completed': '#A47AE2' };
   const FALLBACK_COLORS = ['#7aa7d9', '#e0a82e', '#d07ad9', '#5cc2c2', '#9b9b9b'];
   const board = { on: false, host: null, root: null, toggle: null, projectKey: null, data: null, user: 0, search: '',
-    showCompleted: false, timer: null, dirty: false, drag: null, seq: 0, view: 'board', calShow: false, calExpand: null };
+    showCompleted: false, timer: null, dirty: false, drag: null, seq: 0, view: 'board', calShow: false, calExpand: null,
+    calAdd: null, calAdding: false };
   const COLLAPSE_PREF = 'wjl.boardCollapsed';
   board.collapsed = (() => { try { return JSON.parse(localStorage.getItem(COLLAPSE_PREF) || '{}') || {}; } catch (e) { return {}; } })();
   const saveCollapsed = () => { try { localStorage.setItem(COLLAPSE_PREF, JSON.stringify(board.collapsed)); } catch (e) {} };
@@ -1939,6 +1990,12 @@
       .calchip.ov { background: #fdecec; border-left-color: #e5484d; color: #a11111; }
       .calchip.done { background: #eef4ee; border-left-color: #8bbf8b; color: #4a7a4a; text-decoration: line-through; }
       .calchip.dragging { opacity: .4; }
+      .ccell .caladd { align-self: flex-start; margin-top: auto; border: 0; background: transparent; color: #b4b4bc; font-size: 15px; line-height: 1; width: 18px; height: 18px; border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity .1s; padding: 0; flex: none; }
+      .ccell:hover .caladd { opacity: 1; }
+      .ccell .caladd:hover { background: #eef1f6; color: #2b6cb0; }
+      .ccell.adding { outline: 2px solid #8bc34a; outline-offset: -2px; }
+      .caladdi { margin-top: 3px; width: 100%; box-sizing: border-box; font-size: 11px; padding: 3px 5px; border: 1px solid #8bc34a; border-radius: 5px; outline: none; flex: none; }
+      .caladdi:disabled { opacity: .6; }
       .calmore { font-size: 10px; color: #2b6cb0; padding-left: 4px; cursor: pointer; flex: none; }
       .calmore:hover { text-decoration: underline; }
       .col { flex: 0 0 280px; width: 280px; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; background: color-mix(in srgb, var(--c) 12%, #fff); min-height: 0; border: 2px solid transparent; transition: border-color .12s; }
@@ -2045,6 +2102,11 @@
     </style><div class="wrap"><div class="bar"></div><div class="cols"><div class="msg">Loading board…</div></div></div>`;
     ['keydown', 'keyup', 'keypress'].forEach(t => root.addEventListener(t, e => e.stopPropagation()));
     root.addEventListener('keydown', e => {
+      if (e.target && e.target.classList && e.target.classList.contains('caladdi')) {
+        if (e.key === 'Enter') { e.preventDefault(); submitCalAdd(e.target); return; }
+        if (e.key === 'Escape') { e.preventDefault(); board.calAdd = null; renderBoard(); return; }
+        return;
+      }
       if (!board.modal) return;
       if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('tdnew')) { e.preventDefault(); addTodo(); return; }
       if (e.key === 'Escape') { e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); }
@@ -2238,7 +2300,7 @@
     bar.innerHTML = `<span class="calnav"><button type="button" class="icon calprev" title="Previous month">‹</button><button type="button" class="icon caltoday">Today</button><button type="button" class="icon calnext" title="Next month">›</button></span>`
       + `<strong class="calmonth">${esc(CAL_MONTHS[cal.month.getMonth()])} ${cal.month.getFullYear()}</strong>`
       + `<label class="chk"><input type="checkbox" class="calshow" ${board.calShow ? 'checked' : ''}> Show completed</label>`
-      + `<span class="calhint">Drag a task to change its due date · click to open</span>`
+      + `<span class="calhint">Drag a task to change its due date · click to open · + to add</span>`
       + `<button type="button" class="icon refresh" style="margin-left:auto" title="Reload from Workamajig">↻</button>`;
     board.root.querySelector('.cols').innerHTML = calGridHtml();
     if (board.modal) renderModal();
@@ -2255,9 +2317,29 @@
       const shown = expanded ? list : list.slice(0, 4);
       const chips = shown.map(t => `<div class="calchip ${t.overdue ? 'ov' : ''} ${t.done ? 'done' : ''}" data-task="${t.taskKey}" title="${esc((t.taskId ? t.taskId + ' · ' : '') + t.name + (t.group ? ' — ' + t.group : ''))}">${esc(t.name)}</div>`).join('');
       const more = (!expanded && list.length > shown.length) ? `<div class="calmore" data-date="${key}">+${list.length - shown.length} more</div>` : '';
-      return `<div class="ccell ${inMonth ? '' : 'out'} ${key === today ? 'today' : ''} ${expanded ? 'exp' : ''}" data-date="${key}"><span class="cdn">${d.getDate()}</span><div class="cchips">${chips}${more}</div></div>`;
+      const adding = board.calAdd === key;
+      const addUi = !inMonth ? ''
+        : adding ? `<input class="caladdi" type="text" placeholder="Task name…" data-date="${key}" maxlength="200" ${board.calAdding ? 'disabled' : ''}>`
+        : `<button type="button" class="caladd" data-date="${key}" title="Add a task due this day">+</button>`;
+      return `<div class="ccell ${inMonth ? '' : 'out'} ${key === today ? 'today' : ''} ${expanded ? 'exp' : ''} ${adding ? 'adding' : ''}" data-date="${key}"><span class="cdn">${d.getDate()}</span><div class="cchips">${chips}${more}</div>${addUi}</div>`;
     }).join('');
     return `<div class="calgrid"><div class="cdows">${dows}</div><div class="cweeks">${cells}</div></div>`;
+  }
+  // Create a task from the Calendar's inline "Task name…" box (Enter). Keeps the box disabled during the write so a
+  // blur can't cancel mid-flight, then reloads the board so the new chip appears on its day.
+  async function submitCalAdd(input) {
+    const name = String(input.value || '').trim();
+    const date = input.dataset.date;
+    if (!name) { board.calAdd = null; renderBoard(); return; }
+    board.calAdding = true; input.disabled = true;
+    try {
+      await createTask(board.projectKey, name, date);
+      board.calAdd = null; board.calAdding = false;
+      toast('Task created'); await loadBoard();
+    } catch (err) {
+      board.calAdding = false; input.disabled = false;
+      toast('Could not create task: ' + (err && err.message || err));
+    }
   }
 
   function renderColumns() {
@@ -2333,6 +2415,14 @@
     if (t.classList.contains('calnext')) { cal.month.setMonth(cal.month.getMonth() + 1); board.calExpand = null; renderBoard(); return; }
     if (t.classList.contains('caltoday')) { const n = new Date(); cal.month = new Date(n.getFullYear(), n.getMonth(), 1); board.calExpand = null; renderBoard(); return; }
     if (t.classList.contains('calmore')) { board.calExpand = t.dataset.date; renderBoard(); return; }
+    if (t.classList.contains('caladd')) {
+      board.calAdd = t.dataset.date; renderBoard();
+      const i = board.root.querySelector('.caladdi');
+      if (i) { i.focus(); i.addEventListener('blur', () => { if (board.calAdd && !board.calAdding) { board.calAdd = null; renderBoard(); } }); }
+      return;
+    }
+    if (t.classList.contains('caladdi')) return; // typing in the quick-add box
+    if (board.calAdd && t.closest && t.closest('.ccell') && !t.closest('.calchip')) { board.calAdd = null; renderBoard(); return; }
     { const cc = t.closest && t.closest('.calchip'); if (cc) { const tk = Number(cc.dataset.task); const slot = (board.data.projectTaskUserData || []).find(x => x.TaskKey === tk && x.UserKey > 0); openModal({ taskKey: tk, tuk: slot ? slot.TaskUserKey : 0 }); return; } }
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
