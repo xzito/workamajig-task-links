@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.46.0';
+  const VERSION = '0.47.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -2658,6 +2658,7 @@
         ${tu ? `<a class="mbtn primary mopen" href="${urls.assignment(tu.TaskUserKey)}" target="_blank" rel="noopener" title="Opens the assignment in a new tab">Open full assignment<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M12 9.5v3a1 1 0 01-1 1H3.5a1 1 0 01-1-1V5a1 1 0 011-1h3"/></svg></a>` : ''}
         ${canEdit ? `<button type="button" class="mbtn ${tu ? '' : 'primary'} massign">${tu ? 'Manage assignees' : 'Assign people'}</button>` : ''}
         <button type="button" class="mbtn mlist">Show in list</button>
+        ${timeActionsOn() && timerEligible(t) ? '<button type="button" class="mbtn mtimer" title="Start a Workamajig timer on this task (shows in My Time)">Start timer</button>' : ''}
         <span class="spacer"></span>
         <button type="button" class="mbtn mcopyt" title="Copy a link that opens the schedule and spotlights this task"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.75A1.25 1.25 0 009.25 2.5h-5.5A1.25 1.25 0 002.5 3.75v5.5a1.25 1.25 0 001.25 1.25H5.5"/></svg>Copy task link</button>
         ${tu ? `<button type="button" class="mbtn mcopya" title="Copy the link to this assignment page"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.75A1.25 1.25 0 009.25 2.5h-5.5A1.25 1.25 0 002.5 3.75v5.5a1.25 1.25 0 001.25 1.25H5.5"/></svg>Copy assignment link</button>` : ''}
@@ -2810,6 +2811,7 @@
     const tu = ref.tuk ? (board.data.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
     const task = (board.data.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
     if (t.classList.contains('mlist')) { closeModal(); showInList(ref.taskKey); return; }
+    if (t.classList.contains('mtimer')) { startTimerFor(board.projectKey, ref.taskKey, ref.tuk); return; }
     if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
     if (t.classList.contains('mcopya')) { copy(urls.assignment(ref.tuk), 'assignment link'); return; }
@@ -2853,6 +2855,18 @@
     }
   }
 
+  // Time actions. Gate (sync rewrites timeActionsOn() to ON('time.actions')). Only money/budget tasks accept time, so
+  // we only offer "Start timer" there (and not on summary rows). Starting the timer uses Workamajig's own global
+  // TimesheetTimer.newTimer (core.js, present on every page), so it shows up in My Time exactly like the native one.
+  function timeActionsOn() { return true; }
+  const timerEligible = t => !!t && Number(t.MoneyTask) === 1 && String(t.TaskType).toLowerCase() !== 'summary';
+  function startTimerFor(projectKey, taskKey, tuk) {
+    const T = window.TimesheetTimer;
+    if (!T || typeof T.newTimer !== 'function') { toast('Timers are not available here'); return; }
+    try { T.newTimer({ ProjectKey: Number(projectKey), TaskKey: Number(taskKey), TaskUserKey: Number(tuk) || 0 }); toast('Timer started — see My Time'); }
+    catch (e) { toast('Could not start the timer: ' + (e && e.message || e)); }
+  }
+
   function openCardMenu(btnEl) {
     closeCardMenu();
     const card = btnEl.closest('.card');
@@ -2864,6 +2878,7 @@
     if (tuk) items.push(['Open assignment', () => openApp(ASSIGN_AID, tuk)]);
     if (tuk) items.push(['Open assignment in new tab', () => window.open(urls.assignment(tuk), '_blank', 'noopener')]);
     items.push(['Show in list', () => showInList(taskKey)]);
+    if (timeActionsOn() && timerEligible((board.data && board.data.tasks || []).find(x => x.TaskKey === taskKey))) items.push(['Start timer', () => startTimerFor(pk, taskKey, tuk)]);
     items.push(['Copy task link', () => copy(urls.task(pk, taskKey), 'task link')]);
     if (tuk) items.push(['Copy assignment link', () => copy(urls.assignment(tuk), 'assignment link')]);
     items.forEach(([label, fn]) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); closeCardMenu(); fn(); }); m.appendChild(b); });
