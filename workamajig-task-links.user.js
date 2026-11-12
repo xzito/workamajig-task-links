@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.59.0';
+  const VERSION = '0.60.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -1980,10 +1980,12 @@
       .conv.open, .conv.on { background: #e6f1fb; border-color: #85b7eb; color: #0c447c; }
       .hyg.on { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
       .fslot:empty { display: none; }
-      .fchip { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; font-weight: 600; color: #0c447c; background: #e6f1fb; border: 1px solid #85b7eb; border-radius: 8px; padding: 0 0 0 10px; }
+      .fslot { display: inline-flex; align-items: center; gap: 6px; }
+      .fslot .flabel { font-size: 12px; font-weight: 700; color: #0c447c; }
+      .fchip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; font-weight: 600; color: #0c447c; background: #e6f1fb; border: 1px solid #85b7eb; border-radius: 999px; padding: 2px 3px 2px 10px; }
       .fchip .fh { font-weight: 400; color: #4a6f94; }
-      .fchip .fx { border: 0; border-left: 1px solid #85b7eb; border-radius: 0 7px 7px 0; background: #fff; color: #0c447c; font-weight: 600; }
-      .fchip .fx:hover { background: #f0f6fc; }
+      .fchip .fx { border: 0; background: none; color: #0c447c; font-weight: 600; font-size: 14px; line-height: 1; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; }
+      .fchip .fx:hover { background: #cfe4f8; }
       .hrow.act { background: #f0f6fc; }
       .hrow.act .caret { color: #1a8fbf; font-size: 12px; }
       .fx2 { border: 0; background: none; padding: 0; color: #1a8fbf; text-decoration: underline; font-size: 12px; cursor: pointer; }
@@ -2213,7 +2215,7 @@
     const hidden = hide ? leaf.filter(k => +byKey.get(k).PercComp >= 100).length : 0;
     const shown = leaf.length - hidden;
     const tip = `Only these tasks are shown in the list.${hidden ? ` ${hidden} more match but are completed, and Hide Completed Tasks is on.` : ''}`;
-    return `<span class="fchip" title="${esc(tip)}">${esc(listFilter.label)} · ${shown}${hidden ? ` <span class="fh">+${hidden} hidden</span>` : ''}<button type="button" class="fx" title="Show all tasks again">Clear</button></span>`;
+    return `<span class="flabel">Filters</span><span class="fchip" title="${esc(tip)}">${esc(listFilter.label)} · ${shown}${hidden ? ` <span class="fh">+${hidden} hidden</span>` : ''}<button type="button" class="fx" title="Remove this filter" aria-label="Remove this filter">×</button></span>`;
   }
 
   function openListHygiene(mode) {
@@ -2393,8 +2395,12 @@
       .search { margin-left: auto; width: 200px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font: inherit; font-size: 12px; color: #333; background: #fff; }
       .search:focus { outline: none; border-color: #7ab51d; }
       .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer; user-select: none; }
-      .fsum { flex-basis: 100%; font-size: 12px; color: #6b4b00; background: #fff8e5; border: 1px solid #f0d9a0; border-radius: 6px; padding: 5px 10px; }
-      .fsum .mlink { border: 0; background: none; padding: 0; margin-left: 8px; color: #1a8fbf; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
+      .fsum { flex-basis: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: #6b4b00; background: #fff8e5; border: 1px solid #f0d9a0; border-radius: 6px; padding: 5px 10px; }
+      .fsum .flabel { font-weight: 700; margin-right: 2px; }
+      .fpill { display: inline-flex; align-items: center; gap: 2px; background: #fff; border: 1px solid #e3c98a; border-radius: 999px; padding: 2px 3px 2px 10px; color: #6b4b00; font-weight: 600; }
+      .fpill .fpx { border: 0; background: none; cursor: pointer; color: #9a7a2a; font-size: 14px; line-height: 1; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+      .fpill .fpx:hover { background: #f0d9a0; color: #5a3f00; }
+      .fsum .mlink { border: 0; background: none; padding: 0; margin-left: 2px; color: #1a8fbf; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
       .hwrap { position: relative; display: inline-block; }
       .icon.hyg .n { color: #b07a00; font-weight: 600; margin-left: 2px; }
       .icon.hyg.on { background: #fff4d6; border-color: #e0a82e; color: #6b4b00; }
@@ -2727,13 +2733,17 @@
         <div class="hfoot"><button type="button" class="mlink hall">Any issue</button><button type="button" class="mlink hnone">Clear</button></div></div>` : ''}</span>`; })()}
       <button type="button" class="icon refresh" style="margin-left:auto" title="Reload from Workamajig">↻</button>
       ${(() => {
-        const parts = [];
-        if (board.user) { const p = people.get(board.user); parts.push(esc(p ? p.name : 'one person')); }
-        if (board.hyg.size) parts.push(HYGIENE.filter(h => board.hyg.has(h.key)).map(h => h.label.toLowerCase()).join(' or '));
-        if (q) parts.push('matching “' + esc(board.search.trim()) + '”');
-        if (board.onlyTodos) parts.push('tasks with open to-dos');
-        if (board.onlyConv) parts.push('tasks with conversations');
-        return parts.length ? `<div class="fsum">Filtered: showing ${parts.join(' · ')} <button type="button" class="mlink fclear">Clear filters</button></div>` : '';
+        // One removable chip per active filter (person, each hygiene issue, search, to-dos, conversations), so it's
+        // clear what's on and each can be dropped on its own via its ×. "Clear all" only when more than one is active.
+        const chips = [];
+        if (board.user) { const p = people.get(board.user); chips.push({ f: 'user', label: esc(p ? p.name : 'One person') }); }
+        if (board.hyg.size) HYGIENE.filter(h => board.hyg.has(h.key)).forEach(h => chips.push({ f: 'hyg', k: h.key, label: esc(h.label) }));
+        if (q) chips.push({ f: 'search', label: 'Matching “' + esc(board.search.trim()) + '”' });
+        if (board.onlyTodos) chips.push({ f: 'todos', label: 'Has open to-dos' });
+        if (board.onlyConv) chips.push({ f: 'conv', label: 'Has conversations' });
+        if (!chips.length) return '';
+        const pills = chips.map(c => `<span class="fpill">${c.label}<button type="button" class="fpx" data-f="${c.f}"${c.k ? ` data-k="${c.k}"` : ''} title="Remove this filter" aria-label="Remove this filter">×</button></span>`).join('');
+        return `<div class="fsum"><span class="flabel">Filters</span>${pills}${chips.length > 1 ? '<button type="button" class="mlink fclear">Clear all</button>' : ''}</div>`;
       })()}`;
     board.model = m;
     renderColumns();
@@ -2878,6 +2888,15 @@
     if (t.classList.contains('chip')) { board.user = Number(t.dataset.user); renderBoard(); return; }
     if (t.closest && t.closest('.chip')) { board.user = Number(t.closest('.chip').dataset.user); renderBoard(); return; }
     if (t.classList.contains('refresh')) { loadBoard(); return; }
+    if (t.classList.contains('fpx')) {
+      const f = t.dataset.f;
+      if (f === 'user') board.user = 0;
+      else if (f === 'hyg') board.hyg.delete(t.dataset.k);
+      else if (f === 'search') { board.search = ''; clearNativeSearch(); }
+      else if (f === 'todos') board.onlyTodos = false;
+      else if (f === 'conv') board.onlyConv = false;
+      renderBoard(); return;
+    }
     if (t.classList.contains('fclear')) { board.user = 0; board.hyg.clear(); board.onlyTodos = false; board.onlyConv = false; board.search = ''; clearNativeSearch(); board.hygOpen = false; renderBoard(); return; }
     if (t.closest && t.closest('.hyg')) { board.hygOpen = !board.hygOpen; renderBoard(); return; }
     if (t.classList.contains('hall')) { HYGIENE.forEach(h => board.hyg.add(h.key)); renderBoard(); return; }
