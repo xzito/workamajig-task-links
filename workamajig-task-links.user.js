@@ -16,11 +16,12 @@
   const BASE = location.origin + '/platinum/';
   const SS_KEY = 'uxa.pendingTask';
   const SS_POST = 'uxa.pendingPost';
+  const SS_MODAL = 'uxa.pendingModal'; // My Time → schedule handoff: open a task's board modal on arrival
   // The `application` tag Workamajig stamps on every schedule API call shows up in their server logs. We send the exact
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.44.0';
+  const VERSION = '0.45.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -351,6 +352,118 @@
         }, ms));
       } else if (++tries > 60) { clearInterval(t); pendingTimer = null; try { sessionStorage.removeItem(SS_KEY); } catch (e) {} }
     }, 250);
+  }
+
+  // ---------- My Time: make each running-timer card's project + assignment clickable, and show the customer ----------
+  // The timer panel's cards (<li data-key=TimerKey>) show the task, service, project name and number but link nowhere
+  // (clicking edits the timer). We resolve each timer to its project/task/assignment via loadTimers, then: the task
+  // opens the assignment's board modal (handed off to the project's schedule, since the modal lives there and a timer
+  // often has no assignment slot), the project opens its dashboard, and the customer name is shown beneath (not a link).
+  let timerMap = null, timerMapAt = 0, timerLoading = false, timerClickBound = false;
+  const clientNames = new Map(); // projectKey(str) -> ClientName ('' while loading / when none)
+  function loadTimersData() {
+    if (timerLoading || (timerMap && Date.now() - timerMapAt < 15000)) return;
+    timerLoading = true;
+    call('Framework.CommonObjects.Time', 'loadTimers', {}).then(d => {
+      const m = new Map();
+      for (const t of (d && d.table) || []) m.set(String(t.TimerKey), { pk: t.ProjectKey, taskKey: t.TaskKey, tuk: t.TaskUserKey || 0 });
+      timerMap = m; timerMapAt = Date.now();
+    }).catch(() => {}).then(() => { timerLoading = false; });
+  }
+  function clientNameFor(pk, cb) {
+    const key = String(pk);
+    if (clientNames.has(key)) { cb(clientNames.get(key)); return; }
+    clientNames.set(key, '');
+    call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: Number(pk) })
+      .then(d => { const n = String((d && d.project && d.project.ClientName) || '').trim(); clientNames.set(key, n); cb(n); })
+      .catch(() => { clientNames.delete(key); });
+  }
+  function bindTimerClicks() {
+    if (timerClickBound) return; timerClickBound = true;
+    // One capture-phase listener beats Workamajig's own card click (which edits the timer) and survives re-renders.
+    document.addEventListener('click', e => {
+      const el = e.target.closest && e.target.closest('.uxa-tlink');
+      if (!el) return;
+      const info = timerMap && timerMap.get(el.dataset.uxaKey);
+      if (!info) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (el.dataset.uxaKind === 'asg') { try { sessionStorage.setItem(SS_MODAL, JSON.stringify({ pk: String(info.pk), taskKey: info.taskKey, tuk: info.tuk || 0, ts: Date.now() })); } catch (err) {} openApp('projects.schedule.edit2', info.pk); }
+      else openApp('dashboards.project.dash', info.pk);
+    }, true);
+  }
+  function ensureTimerStyle() {
+    if (document.getElementById('uxa-timer-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-timer-style';
+    s.textContent = '.uxa-tlink{cursor:pointer}.uxa-tlink:hover{text-decoration:underline;color:#2b6cb0}.uxa-cust{font-size:11px;opacity:.8}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function timersTick() {
+    if (aid() !== 'user.timeEntry.edit') return;
+    const cards = [...document.querySelectorAll('li[data-key]')].filter(li => li.querySelector('[data-action="editTimer"]'));
+    if (!cards.length) return;
+    if (!timerMap) { loadTimersData(); return; }
+    ensureTimerStyle(); bindTimerClicks();
+    for (const li of cards) {
+      if (li.dataset.uxaDone === '1') continue;
+      const key = String(li.dataset.key);
+      const info = timerMap.get(key);
+      if (!info) { loadTimersData(); continue; } // a timer not in our map yet (just started) — refresh and retry next tick
+      const body = li.querySelector('[data-action="editTimer"]');
+      if (!body) continue;
+      const taskEl = body.querySelector('.bold') || body.children[0];
+      const numEl = body.querySelector('.node');
+      const nameEl = numEl ? numEl.previousElementSibling : null;
+      const mark = (el, kind) => { if (!el) return; el.classList.add('uxa-tlink'); el.dataset.uxaKind = kind; el.dataset.uxaKey = key; };
+      mark(taskEl, 'asg'); mark(numEl, 'proj'); mark(nameEl, 'proj');
+      if (!body.querySelector('.uxa-cust')) {
+        const c = document.createElement('div'); c.className = 'muted uxa-cust';
+        (numEl || body).insertAdjacentElement(numEl ? 'afterend' : 'beforeend', c);
+        clientNameFor(info.pk, n => { if (n) c.textContent = n; else c.remove(); });
+      }
+      li.dataset.uxaDone = '1';
+    }
+  }
+  // On the schedule, honor a pending "open this task's modal" handoff from the My Time timer cards.
+  let pendingModalTimer = null;
+  function handlePendingModal() {
+    let raw = null; try { raw = sessionStorage.getItem(SS_MODAL); } catch (e) {}
+    if (!raw || aid() !== 'projects.schedule.edit2' || pendingModalTimer) return;
+    let req; try { req = JSON.parse(raw); } catch (e) { try { sessionStorage.removeItem(SS_MODAL); } catch (_) {} return; }
+    if (String(qs().get('k')) !== String(req.pk)) return; // wait until the schedule for that project is up
+    let tries = 0;
+    const t = pendingModalTimer = setInterval(() => {
+      if (schedulePage()) {
+        clearInterval(t); pendingModalTimer = null; try { sessionStorage.removeItem(SS_MODAL); } catch (e) {}
+        board.reopen = { ref: { taskKey: req.taskKey, tuk: req.tuk || 0 }, pk: String(req.pk), ts: Date.now() };
+        if (!board.on) openBoard(); else loadBoard(); // loadBoard() opens the modal from board.reopen once data lands
+      } else if (++tries > 80) { clearInterval(t); pendingModalTimer = null; try { sessionStorage.removeItem(SS_MODAL); } catch (e) {} }
+    }, 250);
+  }
+
+  // ---------- Schedule List view: strike through completed tasks (like the Calendar's done chips) ----------
+  // The native list shows completed tasks plainly. We fade the row and strike the task name (only the name cell —
+  // grid-cellgroup.locked), matching the Calendar's struck-green done style. Rows are virtualized (recycled on
+  // scroll), so each tick we set/clear the class on every visible row from a completed-TaskKey set for this project.
+  let strikeSet = null, strikeFor = null;
+  function ensureListStyle() {
+    if (document.getElementById('uxa-list-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-list-style';
+    s.textContent = 'grid-row.uxa-done { opacity: .72; } grid-row.uxa-done grid-cellgroup.locked { text-decoration: line-through; text-decoration-color: #9ec49e; color: #6f9e6f; }';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function listStrikeTick() {
+    const grid = document.querySelector('#grdProjectSchedule');
+    if (!grid) return;
+    const pk = qs().get('k');
+    if (!pk) return;
+    if (strikeFor !== pk) {
+      strikeFor = pk; strikeSet = null;
+      getSchedule(pk).then(s => { if (qs().get('k') !== pk) return; strikeSet = new Set(((s.raw && s.raw.tasks) || []).filter(t => +t.PercComp >= 100 || !!t.ActComplete).map(t => Number(t.TaskKey))); })
+        .catch(() => { if (strikeFor === pk) strikeFor = null; });
+    }
+    if (!strikeSet) return;
+    ensureListStyle();
+    grid.querySelectorAll('grid-row.datarow[data-key]').forEach(r => r.classList.toggle('uxa-done', strikeSet.has(Number(r.dataset.key))));
   }
 
   // ---------- wiring ----------
@@ -3128,6 +3241,7 @@
       if (menu) closeMenu();
       if (btn) btn.style.display = 'none';
       handlePendingTask();
+      handlePendingModal();
       if (aid() === 'projects.diary.add') handlePendingPost();
       if (aid() === 'projects.diary.reply') handlePendingReply();
       if (aid() === ASSIGN_AID) asg.reload = true;
@@ -3136,6 +3250,8 @@
     boardTick();
     panelDimTick();
     searchTick();
+    timersTick();
+    listStrikeTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
