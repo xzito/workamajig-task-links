@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.55.0';
+  const VERSION = '0.56.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -586,9 +586,23 @@
     let tries = 0;
     const iv = setInterval(() => {
       tries++;
-      if (ntaCaught) { clearInterval(iv); const c = ntaCaught; ntaCaught = null; ntaToast(c); }
+      if (ntaCaught) { clearInterval(iv); const c = ntaCaught; ntaCaught = null; ntaReveal(c); }
       else if (tries > 20) clearInterval(iv);  // ~6s
     }, 300);
+  }
+  // Resolve the new task's assignment (TaskUserKey) so the toast can open/copy the assignment, not just the schedule.
+  // The native save already committed the task + its assignee, so a fresh getSchedule (cache busted, since the write
+  // bypassed our cache) carries the new assignment in projectTaskUserData. No assignee → fall back to the task link.
+  async function ntaReveal(info) {
+    let tuk = 0;
+    try {
+      scheduleCache.delete(String(info.projectKey));
+      const sched = await getSchedule(info.projectKey);
+      const slots = sched.slots.get(Number(info.taskKey)) || [];
+      const s = slots.find(x => Number(x.userKey) > 0) || slots[0];
+      if (s) tuk = Number(s.taskUserKey) || 0;
+    } catch (e) { /* offline or locked — fall back to the task link */ }
+    ntaToast({ projectKey: info.projectKey, taskKey: info.taskKey, taskUserKey: tuk, name: info.name });
   }
   function ensureNtaStyle() {
     if (document.getElementById('uxa-nta-style')) return;
@@ -605,19 +619,22 @@
   function ntaToast(info) {
     ensureNtaStyle();
     const old = document.getElementById('uxa-nta'); if (old) old.remove();
-    const link = urls.task(info.projectKey, info.taskKey);
+    const tuk = Number(info.taskUserKey) > 0 ? Number(info.taskUserKey) : 0;
+    // Prefer the assignment (what you share with whoever's assigned); only an unassigned task falls back to the task link.
+    const link = tuk ? urls.assignment(tuk) : urls.task(info.projectKey, info.taskKey);
     const el = document.createElement('div'); el.id = 'uxa-nta';
     el.innerHTML = '<div class="row"><span class="t">Task created</span><button class="x" title="Dismiss">×</button></div>'
       + '<div class="n"></div>'
-      + '<div class="row"><button class="open">Open</button><button class="copy">Copy link</button></div>';
+      + `<div class="row"><button class="open">Open ${tuk ? 'assignment' : 'task'}</button><button class="copy">Copy link</button></div>`;
     el.querySelector('.n').textContent = info.name;
     document.body.appendChild(el);
     const close = () => { clearTimeout(el._t); el.remove(); };
     el.querySelector('.x').onclick = close;
-    el.querySelector('.copy').onclick = () => copy(link, 'task link');
+    el.querySelector('.copy').onclick = () => copy(link, tuk ? 'assignment link' : 'task link');
     el.querySelector('.open').onclick = () => {
-      try { sessionStorage.setItem(SS_KEY, String(info.taskKey)); } catch (e) {}  // let the deep-link highlight it
-      openApp('projects.schedule.edit2', info.projectKey); close();
+      if (tuk) { openApp(ASSIGN_AID, tuk); }
+      else { try { sessionStorage.setItem(SS_KEY, String(info.taskKey)); } catch (e) {} openApp('projects.schedule.edit2', info.projectKey); }
+      close();
     };
     el._t = setTimeout(close, 12000);
   }
