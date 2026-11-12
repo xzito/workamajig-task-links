@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.51.0';
+  const VERSION = '0.52.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -579,6 +579,8 @@
     if (!ref || !ref.projectKey) { note('No task found for this item'); return; }
 
     const onSchedule = aid() === 'projects.schedule.edit2';
+    const rawTask = ref.taskKey && sched && sched.raw && (sched.raw.tasks || []).find(x => Number(x.TaskKey) === Number(ref.taskKey));
+    if (timeActionsOn() && timerEligible(rawTask)) add('Start timer', 'Start a Workamajig timer on this task (shows in My Time)', () => startTimerFor(ref.projectKey, ref.taskKey, 0), 'i-timer');
     if (ref.taskKey) add('Copy task link', 'Opens the schedule and spotlights this task (needs Task Links)', () => copy(urls.task(ref.projectKey, ref.taskKey), 'task link'));
     if (!onSchedule) add('Copy project link', 'Project dashboard', () => copy(urls.project(ref.projectKey), 'project link'));
 
