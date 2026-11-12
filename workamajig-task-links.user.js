@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.45.0';
+  const VERSION = '0.46.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -464,6 +464,24 @@
     if (!strikeSet) return;
     ensureListStyle();
     grid.querySelectorAll('grid-row.datarow[data-key]').forEach(r => r.classList.toggle('uxa-done', strikeSet.has(Number(r.dataset.key))));
+  }
+
+  // ---------- Schedule List view: make it discoverable that rows can be dragged to reorder ----------
+  // Workamajig already handles the drag; it just hides it (the only hint is the grab cursor once you're mid-drag). We
+  // add a grip glyph + grab cursor on row hover so people know a row (parent, summary or task) can be dragged to a new
+  // spot. CSS-only — no DOM injected per row, so it survives the grid's virtualization for free.
+  function ensureDragStyle() {
+    if (document.getElementById('uxa-drag-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-drag-style';
+    s.textContent =
+      'grid-row.datarow{position:relative}' +
+      'grid-row.datarow:hover{cursor:grab}' +
+      'grid-row.datarow:active{cursor:grabbing}' +
+      'grid-row.datarow:hover::before{content:"\\2800\\283F";position:absolute;left:1px;top:0;bottom:0;display:flex;align-items:center;font-size:12px;letter-spacing:-1px;color:#9aa7bd;pointer-events:none;z-index:5}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function listDragTick() {
+    if (document.querySelector('#grdProjectSchedule')) ensureDragStyle();
   }
 
   // ---------- wiring ----------
@@ -3252,6 +3270,7 @@
     searchTick();
     timersTick();
     listStrikeTick();
+    listDragTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
