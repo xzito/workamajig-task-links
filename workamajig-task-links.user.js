@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.47.0';
+  const VERSION = '0.48.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -385,9 +385,9 @@
       const el = e.target.closest && e.target.closest('.uxa-tlink');
       if (!el) return;
       const info = timerMap && timerMap.get(el.dataset.uxaKey);
-      if (!info) return;
+      if (!info || !(Number(info.pk) > 0)) return; // never navigate with a missing project key (would load a k=null all-projects board)
       e.preventDefault(); e.stopImmediatePropagation();
-      if (el.dataset.uxaKind === 'asg') { try { sessionStorage.setItem(SS_MODAL, JSON.stringify({ pk: String(info.pk), taskKey: info.taskKey, tuk: info.tuk || 0, ts: Date.now() })); } catch (err) {} openApp('projects.schedule.edit2', info.pk); }
+      if (el.dataset.uxaKind === 'asg' && Number(info.taskKey) > 0) { try { sessionStorage.setItem(SS_MODAL, JSON.stringify({ pk: String(info.pk), taskKey: info.taskKey, tuk: info.tuk || 0, ts: Date.now() })); } catch (err) {} openApp('projects.schedule.edit2', info.pk); }
       else openApp('dashboards.project.dash', info.pk);
     }, true);
   }
@@ -414,8 +414,11 @@
       const numEl = body.querySelector('.node');
       const nameEl = numEl ? numEl.previousElementSibling : null;
       const mark = (el, kind) => { if (!el) return; el.classList.add('uxa-tlink'); el.dataset.uxaKind = kind; el.dataset.uxaKey = key; };
-      mark(taskEl, 'asg'); mark(numEl, 'proj'); mark(nameEl, 'proj');
-      if (!body.querySelector('.uxa-cust')) {
+      // Many running timers are tied to a project but no specific task (TaskKey null), or to neither. Only open the
+      // task modal when there's a real task; otherwise the name just opens the project. No project → no links.
+      const hasProj = Number(info.pk) > 0, hasTask = Number(info.taskKey) > 0;
+      if (hasProj) { mark(taskEl, hasTask ? 'asg' : 'proj'); mark(numEl, 'proj'); mark(nameEl, 'proj'); }
+      if (hasProj && !body.querySelector('.uxa-cust')) {
         const c = document.createElement('div'); c.className = 'muted uxa-cust';
         (numEl || body).insertAdjacentElement(numEl ? 'afterend' : 'beforeend', c);
         clientNameFor(info.pk, n => { if (n) c.textContent = n; else c.remove(); });
@@ -429,6 +432,7 @@
     let raw = null; try { raw = sessionStorage.getItem(SS_MODAL); } catch (e) {}
     if (!raw || aid() !== 'projects.schedule.edit2' || pendingModalTimer) return;
     let req; try { req = JSON.parse(raw); } catch (e) { try { sessionStorage.removeItem(SS_MODAL); } catch (_) {} return; }
+    if (!(Number(req.pk) > 0) || !(Number(req.taskKey) > 0)) { try { sessionStorage.removeItem(SS_MODAL); } catch (e) {} return; } // guard: never act on a null project/task
     if (String(qs().get('k')) !== String(req.pk)) return; // wait until the schedule for that project is up
     let tries = 0;
     const t = pendingModalTimer = setInterval(() => {
@@ -2933,6 +2937,20 @@
 
   // ---- drag and drop (mouse events) ----
   // Drag a calendar task to another day → change its due date (saveTaskDueDate). Mirrors the board's card drag.
+  // A centered spinner over the board while a drag-to-reschedule saves and the board reloads (a few seconds).
+  function calBusy(on) {
+    const wrap = board.root && board.root.querySelector('.wrap');
+    if (!wrap) return;
+    let o = wrap.querySelector('.uxa-busy');
+    if (on) {
+      if (o) return;
+      if (!board.root.querySelector('#uxa-busy-kf')) { const st = document.createElement('style'); st.id = 'uxa-busy-kf'; st.textContent = '@keyframes uxaspin{to{transform:rotate(360deg)}}'; board.root.appendChild(st); }
+      o = document.createElement('div'); o.className = 'uxa-busy';
+      o.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(255,255,255,.6);z-index:25;font:600 13px/1.4 inherit;color:#555';
+      o.innerHTML = '<div style="width:26px;height:26px;border:3px solid #d5dbe4;border-top-color:#2b6cb0;border-radius:50%;animation:uxaspin .7s linear infinite"></div><span>Moving task…</span>';
+      wrap.appendChild(o);
+    } else if (o) o.remove();
+  }
   function startCalDrag(e, chip) {
     const taskKey = Number(chip.dataset.task);
     const fromDate = (chip.closest('.ccell') || {}).dataset ? chip.closest('.ccell').dataset.date : null;
@@ -2967,8 +2985,10 @@
       const date = cell && cell.dataset.date;
       if (!date || date === fromDate) return;
       chip.style.opacity = '.5';
+      calBusy(true); // the save + reload takes a few seconds — show a clear spinner so it's obviously working
       try { await saveTaskDueDate(board.projectKey, taskKey, date); toast('Due date updated'); await loadBoard(); }
       catch (err) { chip.style.opacity = ''; toast('Could not move: ' + (err && err.message || err)); }
+      finally { calBusy(false); }
     };
     window.addEventListener('mousemove', move, true);
     window.addEventListener('mouseup', up, true);
