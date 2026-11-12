@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.50.0';
+  const VERSION = '0.51.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -484,8 +484,9 @@
   function ensureDragStyle() {
     if (document.getElementById('uxa-drag-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-drag-style';
+    // NB: rows are natively position:absolute (virtualized via transform), so we must NOT set position on them — doing
+    // so clobbers the native layout and overlaps every row. The grip ::before positions against the row's own box.
     s.textContent =
-      'grid-row.datarow{position:relative}' +
       'grid-row.datarow:hover{cursor:grab}' +
       'grid-row.datarow:active{cursor:grabbing}' +
       'grid-row.datarow:hover::before{content:"\\2800\\283F";position:absolute;left:1px;top:0;bottom:0;display:flex;align-items:center;font-size:12px;letter-spacing:-1px;color:#9aa7bd;pointer-events:none;z-index:5}';
@@ -502,7 +503,9 @@
   function ensureFrozenStyle() {
     if (document.getElementById('uxa-frozen-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-frozen-style';
-    s.textContent = 'grid-cellgroup.locked{box-shadow:6px 0 8px -4px rgba(0,0,0,.22)}';
+    // A hard 1px edge (continuous down the whole frozen column, since each row's locked group abuts the next) plus a
+    // soft depth shadow — reads as one line, not per-row blobs. box-shadow doesn't affect layout, so no width shift.
+    s.textContent = 'grid-cellgroup.locked{box-shadow:1px 0 0 rgba(0,0,0,.14), 6px 0 8px -4px rgba(0,0,0,.16)}';
     (document.head || document.documentElement).appendChild(s);
   }
   function frozenShadowTick() {
