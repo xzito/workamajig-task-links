@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.60.0';
+  const VERSION = '0.61.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -2015,7 +2015,7 @@
       .msg { padding: 10px 14px; color: #888; font-size: 12px; }
     </style><div class="wrap"><span class="fslot"></span><button type="button" class="conv" title="Tasks that have conversations">Conversations <span class="n">…</span><span class="u"></span> ▾</button><button type="button" class="hyg" title="Project hygiene: find open work with problems">Hygiene <span class="n">…</span> ▾</button></div>`;
     r.querySelector('.hyg').addEventListener('click', () => (listHyg.open === 'hyg' ? closeListHygiene() : openListHygiene('hyg')));
-    r.querySelector('.fslot').addEventListener('click', e => { if (e.target.classList.contains('fx')) clearListFilter(); });
+    r.querySelector('.fslot').addEventListener('click', e => { const b = e.target.closest('.fx'); if (!b) return; if (b.dataset.fx === 'search') clearNativeSearch(); else clearListFilter(); });
     r.querySelector('.conv').addEventListener('click', () => (listHyg.open === 'conv' ? closeListHygiene() : openListHygiene('conv')));
     // The menu lives in its own layer on <body>: inside the page, an ancestor turns position:fixed into
     // "relative to the page panel", which pushed the menu down and clipped it at the panel's right edge.
@@ -2204,18 +2204,25 @@
     const fo = ds.options && ds.options.filter;
     if (fo && fo.f !== fo.uxaWrap) { const keys = fo.uxaKeys; installFilterWrap(ds); fo.uxaKeys = keys || null; if (!fo.uxaKeys) { listFilter = null; renderListHygiene(); } else ds.refresh(true); }
   }
-  // "Showing …" chip: how many matching tasks are visible, and how many Hide Completed Tasks keeps hidden.
+  // Filter chips for the List toolbar: the MagicusPM hygiene/conversation filter (with a shown/hidden count) and
+  // Workamajig's own Search box, each removable on its own. The search value is read live from the native box (not
+  // board.search, which can lag on the list) so the chip can never go stale; boardTick re-renders the slot each tick.
   function listFilterSummary() {
-    if (!listFilter) return '';
-    const ds = listFilter.ds, pg = schedulePage();
-    const m = pg && pg.view && pg.view.module && pg.view.module.model;
-    const hide = !!(m && m.searchTasks && m.searchTasks.si && Number(m.searchTasks.si.hideCompleted) === 1);
-    const byKey = new Map((ds.source || []).map(t => [t.TaskKey, t]));
-    const leaf = [...listFilter.leaf].filter(k => byKey.has(k));
-    const hidden = hide ? leaf.filter(k => +byKey.get(k).PercComp >= 100).length : 0;
-    const shown = leaf.length - hidden;
-    const tip = `Only these tasks are shown in the list.${hidden ? ` ${hidden} more match but are completed, and Hide Completed Tasks is on.` : ''}`;
-    return `<span class="flabel">Filters</span><span class="fchip" title="${esc(tip)}">${esc(listFilter.label)} · ${shown}${hidden ? ` <span class="fh">+${hidden} hidden</span>` : ''}<button type="button" class="fx" title="Remove this filter" aria-label="Remove this filter">×</button></span>`;
+    const chips = [];
+    if (listFilter) {
+      const ds = listFilter.ds, pg = schedulePage();
+      const m = pg && pg.view && pg.view.module && pg.view.module.model;
+      const hide = !!(m && m.searchTasks && m.searchTasks.si && Number(m.searchTasks.si.hideCompleted) === 1);
+      const byKey = new Map((ds.source || []).map(t => [t.TaskKey, t]));
+      const leaf = [...listFilter.leaf].filter(k => byKey.has(k));
+      const hidden = hide ? leaf.filter(k => +byKey.get(k).PercComp >= 100).length : 0;
+      const shown = leaf.length - hidden;
+      const tip = `Only these tasks are shown in the list.${hidden ? ` ${hidden} more match but are completed, and Hide Completed Tasks is on.` : ''}`;
+      chips.push(`<span class="fchip" title="${esc(tip)}">${esc(listFilter.label)} · ${shown}${hidden ? ` <span class="fh">+${hidden} hidden</span>` : ''}<button type="button" class="fx" data-fx="filter" title="Remove this filter" aria-label="Remove this filter">×</button></span>`);
+    }
+    const se = nativeSearch(), sv = se ? se.value.trim() : '';
+    if (sv) chips.push(`<span class="fchip" title="Workamajig’s Search box is filtering the list.">Matching “${esc(sv)}”<button type="button" class="fx" data-fx="search" title="Clear the search" aria-label="Clear the search">×</button></span>`);
+    return chips.length ? `<span class="flabel">Filters</span>${chips.join('')}` : '';
   }
 
   function openListHygiene(mode) {
