@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.63.0';
+  const VERSION = '0.64.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -495,19 +495,19 @@
     // divider on every row (the per-row borders stack into one continuous line, through the header too) and the ⠿ glyph
     // only on the movable rows. Rows are natively position:absolute (virtualized), so the ::after anchors to the row.
     const GUTTER = 22;
-    // Open hand on hover, closed fist on hold, across the whole movable row. Workamajig sets cursor:default on its cells
-    // and row container, so grab on the bare row never showed — we apply it to the cells/containers too (a descendant
-    // selector outscores css-core's bare-tag default). The task-name button keeps its own pointer, so opening a task
-    // still reads as a link. On macOS these map to the classic open-hand / closed-fist cursors.
-    const CELLS = d => 'grid-row.datarow' + d + ',grid-row.summaryHeader' + d;
-    const GRAB = [CELLS(''), CELLS(' grid-cellgroup'), CELLS(' grid-cell'), CELLS(' grid-row-header')].join(',');
-    const GRABBING = [CELLS(':active'), CELLS(':active grid-cellgroup'), CELLS(':active grid-cell'), CELLS(':active grid-row-header')].join(',');
+    // The hand (open on hover, fist on hold) belongs ONLY to the grip, not the whole row — the grip is the drag handle.
+    // So the cursor lives on the gutter ::after (made hit-testable with pointer-events:auto); the rest of the row keeps
+    // its normal cursor. Events still target the row, so Workamajig's own row handling is unaffected. On macOS grab /
+    // grabbing render as the classic open-hand / closed-fist. The empty divider ::after on other rows stays
+    // pointer-events:none so it never swallows clicks.
+    // Last rule: Workamajig natively reveals ~28px action icons (edit / add / “…”) on hover, which stretch the row's flex
+    // line and make it grow taller. We cap those icons to the text line height on hover so the row height stays put.
     s.textContent =
-      GRAB + '{cursor:grab}' +
-      GRABBING + '{cursor:grabbing}' +
       'grid-row grid-row-header{padding-left:' + GUTTER + 'px}' +
       'grid-row::after{content:"";position:absolute;left:0;top:0;bottom:0;width:' + GUTTER + 'px;border-right:1px solid rgba(0,0,0,.12);pointer-events:none;z-index:10}' +
-      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";display:flex;align-items:center;justify-content:center;font-size:13px;color:#9aa7bd}';
+      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";display:flex;align-items:center;justify-content:center;font-size:13px;color:#9aa7bd;pointer-events:auto;cursor:grab}' +
+      'grid-row.datarow:active::after,grid-row.summaryHeader:active::after{cursor:grabbing}' +
+      'grid-row.datarow:hover grid-cell .btn-action.icon,grid-row.summaryHeader:hover grid-cell .btn-action.icon{max-height:18px;min-height:0}';
     (document.head || document.documentElement).appendChild(s);
   }
   function listDragTick() {
