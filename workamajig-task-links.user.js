@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.49.0';
+  const VERSION = '0.50.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -410,17 +410,24 @@
       if (!info) { loadTimersData(); continue; } // a timer not in our map yet (just started) — refresh and retry next tick
       const body = li.querySelector('[data-action="editTimer"]');
       if (!body) continue;
-      const taskEl = body.querySelector('.bold') || body.children[0];
-      const numEl = body.querySelector('.node');
-      const nameEl = numEl ? numEl.previousElementSibling : null;
       const mark = (el, kind) => { if (!el) return; el.classList.add('uxa-tlink'); el.dataset.uxaKind = kind; el.dataset.uxaKey = key; };
-      // Many running timers are tied to a project but no specific task (TaskKey null), or to neither. Only open the
-      // task modal when there's a real task; otherwise the name just opens the project. No project → no links.
+      // The card layout varies — task timers (task / service / project name / project number) vs project-level timers
+      // (project name / project number) — so find rows by content, not a fixed class: the first row is the name, and the
+      // project-number row matches a project-code pattern. Our own customer line is skipped. Many timers have a project
+      // but no task (TaskKey null); only the name of a real-task timer opens the modal, otherwise everything opens the
+      // project. No project → no links.
       const hasProj = Number(info.pk) > 0, hasTask = Number(info.taskKey) > 0;
-      if (hasProj) { mark(taskEl, hasTask ? 'asg' : 'proj'); mark(numEl, 'proj'); mark(nameEl, 'proj'); }
+      const kids = [...body.children].filter(c => c.tagName === 'DIV' && !c.classList.contains('uxa-cust'));
+      const nameEl = kids[0] || null;
+      const numEl = kids.find(c => /^\d{2}-\S+-\d+$/.test((c.textContent || '').trim())) || null;
+      if (hasProj) {
+        if (nameEl) mark(nameEl, hasTask ? 'asg' : 'proj');
+        if (numEl && numEl !== nameEl) mark(numEl, 'proj');
+      }
       if (hasProj && !body.querySelector('.uxa-cust')) {
         const c = document.createElement('div'); c.className = 'muted uxa-cust';
-        (numEl || body).insertAdjacentElement(numEl ? 'afterend' : 'beforeend', c);
+        const anchor = numEl || kids[kids.length - 1];
+        if (anchor) anchor.insertAdjacentElement('afterend', c); else body.appendChild(c);
         clientNameFor(info.pk, n => { if (n) c.textContent = n; else c.remove(); });
       }
       li.dataset.uxaDone = '1';
