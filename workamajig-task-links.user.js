@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.53.0';
+  const VERSION = '0.55.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -505,11 +505,181 @@
     const s = document.createElement('style'); s.id = 'uxa-frozen-style';
     // A hard 1px edge (continuous down the whole frozen column, since each row's locked group abuts the next) plus a
     // soft depth shadow — reads as one line, not per-row blobs. box-shadow doesn't affect layout, so no width shift.
-    s.textContent = 'grid-cellgroup.locked{box-shadow:1px 0 0 rgba(0,0,0,.14), 6px 0 8px -4px rgba(0,0,0,.16)}';
+    // ...plus a little breathing room so the frozen column's text doesn't crowd the shadow line, and the first
+    // scrolling column doesn't start hard against it.
+    s.textContent = 'grid-cellgroup.locked{box-shadow:1px 0 0 rgba(0,0,0,.14), 6px 0 8px -4px rgba(0,0,0,.16)}'
+      + 'grid-cellgroup.locked grid-cell:last-child{padding-right:12px}'
+      + 'grid-cellgroup.unlocked grid-cell:first-child{padding-left:10px}';
     (document.head || document.documentElement).appendChild(s);
   }
   function frozenShadowTick() {
     if (document.querySelector('grid-cellgroup.locked')) ensureFrozenStyle();
+  }
+
+  // ---------- New-task link toast: after Workamajig's native New Task form saves, offer the new task's link ----------
+  // Gated via taskToastOn() (sync -> ON('nav.tasktoast')). We watch ONLY while a New Task (projects.schedule.taskAdd)
+  // form is open: a scoped observer wraps window.fetch to read the save response — the authoritative new ProjectKey +
+  // TaskKey, which also covers the all-projects picker where the project is chosen inside the form — and is removed the
+  // moment the form closes (no permanent global patch). The form clearing (Add more after save) or closing reveals the
+  // caught task as a toast with Open + Copy. Read-only: we never alter a request, and nothing here writes to Workamajig
+  // (the user's own Save does the write); the toast just hands back the link to the task that was created.
+  let ntaFetch = null, ntaWrapper = null;  // original + our wrapper, while the observer is installed
+  let ntaCaught = null;                    // { projectKey, taskKey, name } from a save response this form session
+  let ntaName = '';                        // the latest non-empty Task Name typed in the open form
+  function ntaScan(url, j) {
+    // Only save-type responses (not reads) carry a just-created task; filter by the data.aspx method token so a plain
+    // schedule read (full of existing TaskKeys) can't be mistaken for a creation.
+    const method = (/data\.aspx\?([^&#]*)/i.exec(url) || [])[1] || '';
+    if (!/sav|updat|insert|add|creat/i.test(method) || /load|get|fetch|search|list/i.test(method)) return;
+    const stack = [j]; let n = 0;
+    while (stack.length && n < 6000) {
+      const o = stack.pop(); n++;
+      if (!o || typeof o !== 'object') continue;
+      const tk = Number(o.TaskKey), pk = Number(o.ProjectKey);
+      if (tk > 0 && pk > 0 && typeof o.TaskName === 'string' && o.TaskName.trim()) {
+        // Prefer the task whose name matches what was typed; otherwise keep the latest seen.
+        if (!ntaCaught || (ntaName && o.TaskName.trim().toLowerCase() === ntaName.toLowerCase())) {
+          ntaCaught = { projectKey: pk, taskKey: tk, name: o.TaskName.trim() };
+        }
+      }
+      for (const k in o) { const v = o[k]; if (v && typeof v === 'object') stack.push(v); }
+    }
+  }
+  function ntaInstall() {
+    if (ntaFetch) return;
+    ntaFetch = window.fetch;
+    const orig = ntaFetch;
+    ntaWrapper = function (...args) {
+      const p = orig.apply(this, args);
+      try {
+        const url = String((args[0] && args[0].url) || args[0] || '');
+        if (/data\.aspx/i.test(url)) p.then(r => { try { r.clone().json().then(j => ntaScan(url, j)).catch(() => {}); } catch (e) {} }).catch(() => {});
+      } catch (e) {}
+      return p;
+    };
+    window.fetch = ntaWrapper;
+    ntaCaught = null; ntaName = '';
+  }
+  function ntaRemove() {
+    if (!ntaFetch) return;
+    try { if (window.fetch === ntaWrapper) window.fetch = ntaFetch; } catch (e) {}  // only if nobody wrapped after us
+    ntaFetch = null; ntaWrapper = null;
+  }
+  function taskToastOn() { return true; }
+  function ntaTick() {
+    if (!taskToastOn()) { ntaRemove(); return; }
+    const pg = document.querySelector('page.open[data-aid="projects.schedule.taskAdd"]');
+    if (pg) {
+      ntaInstall();
+      const nameEl = pg.querySelector('input[name="TaskName"]');
+      const name = nameEl ? (nameEl.value || '').trim() : '';
+      if (name) ntaName = name;                                 // remember the latest typed name
+      else if (ntaName) { ntaFinish(ntaName); ntaName = ''; }   // name cleared (Add more save) while form open
+    } else if (ntaFetch) {
+      if (ntaName) { ntaFinish(ntaName); ntaName = ''; }        // form closed: a save or a cancel
+      ntaRemove();
+    }
+  }
+  // A save looks to have happened; wait briefly for its response to be caught, then toast the new task. No caught task
+  // within the window means it was a cancel (or a save whose response we couldn't read) — stay silent rather than guess.
+  function ntaFinish(name) {
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (ntaCaught) { clearInterval(iv); const c = ntaCaught; ntaCaught = null; ntaToast(c); }
+      else if (tries > 20) clearInterval(iv);  // ~6s
+    }, 300);
+  }
+  function ensureNtaStyle() {
+    if (document.getElementById('uxa-nta-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-nta-style';
+    s.textContent = '#uxa-nta{position:fixed;right:20px;bottom:20px;z-index:100000;background:#fff;color:#222;border:1px solid #d6d6d6;border-left:4px solid #7ab51d;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);font:13px/1.4 -apple-system,Segoe UI,sans-serif;padding:12px 14px;max-width:340px;animation:uxaNtaIn .18s ease}'
+      + '@keyframes uxaNtaIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}'
+      + '#uxa-nta .t{font-weight:600}#uxa-nta .n{color:#555;margin:2px 0 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+      + '#uxa-nta .row{display:flex;gap:8px;align-items:center}'
+      + '#uxa-nta button{font:inherit;font-size:12px;border-radius:5px;padding:5px 12px;cursor:pointer;border:1px solid #ccc;background:#fff}'
+      + '#uxa-nta .open{background:#7ab51d;border-color:#7ab51d;color:#fff}'
+      + '#uxa-nta .x{margin-left:auto;border:0;background:none;color:#999;font-size:16px;line-height:1;padding:2px 4px}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function ntaToast(info) {
+    ensureNtaStyle();
+    const old = document.getElementById('uxa-nta'); if (old) old.remove();
+    const link = urls.task(info.projectKey, info.taskKey);
+    const el = document.createElement('div'); el.id = 'uxa-nta';
+    el.innerHTML = '<div class="row"><span class="t">Task created</span><button class="x" title="Dismiss">×</button></div>'
+      + '<div class="n"></div>'
+      + '<div class="row"><button class="open">Open</button><button class="copy">Copy link</button></div>';
+    el.querySelector('.n').textContent = info.name;
+    document.body.appendChild(el);
+    const close = () => { clearTimeout(el._t); el.remove(); };
+    el.querySelector('.x').onclick = close;
+    el.querySelector('.copy').onclick = () => copy(link, 'task link');
+    el.querySelector('.open').onclick = () => {
+      try { sessionStorage.setItem(SS_KEY, String(info.taskKey)); } catch (e) {}  // let the deep-link highlight it
+      openApp('projects.schedule.edit2', info.projectKey); close();
+    };
+    el._t = setTimeout(close, 12000);
+  }
+
+  // ---------- Projects grid: prefix "$" on dollar columns ----------
+  // Gated via gridCurrencyOn() (sync -> ON('grid.currency')). Workamajig marks no cell as currency — a grid cell is known
+  // only by column index, and counts, hours and money all look alike. But the grid's row data uses stable native field
+  // names (TotalLaborGross, CurrentBudgetExpenseGross, AdvanceBilled, ...), so we classify a numeric field as money by its
+  // NAME — override-proof, since a Field Label Override changes only the header, not the field — then find which column
+  // shows it by matching cell values to the record, paired by ProjectKey across several rows so a coincidental tie on 0
+  // can't fool it. A <style> prefixes "$" via ::before on those columns, recomputed when the column set changes (a layout
+  // switch). Scope: the Projects dashboard grid (projects.production.dash / grdProductionDash) and its column-set layouts.
+  function gridCurrencyOn() { return true; }
+  const CUR_MONEY = f => /gross|profit|budget|billed|amount|cost|expense|labor|advance|revenue|price|deposit|paid|invoice/i.test(f)
+    && !/hours?|hrs|perc|count|qty|number|key|status|color|days?|date|update|locked|isfav|order\b/i.test(f);
+  let curSig = '';
+  function curDetect(gridEl, vdata) {
+    const rows = [...gridEl.querySelectorAll('grid-row.datarow[data-key]')];
+    if (rows.length < 2) return [];
+    const recByKey = new Map(vdata.map(d => [String(d.ProjectKey), d]));
+    const numeric = new Set();
+    for (const d of vdata.slice(0, 25)) if (d) for (const k in d) if (typeof d[k] === 'number') numeric.add(k);
+    const money = [...numeric].filter(CUR_MONEY);
+    if (!money.length) return [];
+    const sample = rows.find(r => r.querySelector('grid-cell[data-idx]:not(.header)'));
+    if (!sample) return [];
+    const colIdxs = [...sample.querySelectorAll('grid-cell[data-idx]:not(.header)')].map(c => c.getAttribute('data-idx'));
+    const out = [];
+    for (const idx of colIdxs) {
+      for (const F of money) {
+        let ok = 0, seen = 0, first = null, distinct = false, bad = false;
+        for (const r of rows) {
+          const rec = recByKey.get(r.getAttribute('data-key')); if (!rec || typeof rec[F] !== 'number') { bad = true; break; }
+          const c = r.querySelector('grid-cell[data-idx="' + idx + '"]:not(.header)'); if (!c) continue;
+          const raw = (c.textContent || '').trim(); if (raw === '') continue;
+          const num = parseFloat(raw.replace(/[,\s]/g, '')); if (isNaN(num)) { bad = true; break; }
+          seen++; if (Math.abs(num - rec[F]) < 0.02) ok++; else { bad = true; break; }
+          if (first === null) first = num; else if (num !== first) distinct = true;
+        }
+        if (!bad && ok === seen && seen >= 2 && distinct) { out.push(idx); break; }  // this column IS money
+      }
+    }
+    return out;
+  }
+  function gridCurrencyTick() {
+    const existing = document.getElementById('uxa-cur-style');
+    if (!gridCurrencyOn() || aid() !== 'projects.production.dash') { if (existing) existing.remove(); curSig = ''; return; }
+    const gridEl = document.getElementById('grdProductionDash');
+    if (!gridEl) return;
+    const pg = [...document.querySelectorAll('page.open[data-aid="projects.production.dash"]')].pop();
+    const ctl = pg && pg.view && pg.view.grids && pg.view.grids.grdProductionDash;
+    const vdata = ctl && ctl.vdata;
+    if (!Array.isArray(vdata) || !vdata.length) return;
+    // Signature = the header set; a layout switch changes it and forces a recompute.
+    const sig = [...gridEl.querySelectorAll('grid-cell.header[data-idx]')].map(h => h.getAttribute('data-idx') + ':' + (h.textContent || '').trim()).join('|');
+    if (sig === curSig && existing) return;
+    const idxs = curDetect(gridEl, vdata);
+    if (!idxs.length) return;  // rows not ready yet — retry next tick without locking the signature
+    curSig = sig;
+    const st = existing || document.createElement('style');
+    if (!existing) { st.id = 'uxa-cur-style'; (document.head || document.documentElement).appendChild(st); }
+    st.textContent = idxs.map(i => '#grdProductionDash grid-cell[data-idx="' + i + '"]:not(.header):not(:empty)::before{content:"$"}').join('');
   }
 
   // ---------- Schedule row-detail slideout: rich text for the native Task Description ----------
@@ -3394,6 +3564,8 @@
     listDragTick();
     frozenShadowTick();
     nativeDescTick();
+    ntaTick();
+    gridCurrencyTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
