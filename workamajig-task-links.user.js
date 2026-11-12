@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.61.0';
+  const VERSION = '0.62.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -487,16 +487,20 @@
   function ensureDragStyle() {
     if (document.getElementById('uxa-drag-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-drag-style';
-    // The grip gets its OWN left gutter: the ::after is a full-height box at the row's left edge with the ⠿ glyph
-    // centred and a 1px right divider. Each row's box abuts the next, so the dividers stack into one continuous vertical
-    // line separating the grip column from the checkboxes. We then push the first (locked) cell's content right past the
-    // gutter so the checkbox no longer sits under the grip. CSS-only; survives virtualization.
-    const GUTTER = 24;
+    // The grip gets its own left gutter with a divider, laid out so it never sits under the checkbox. We can't pad the
+    // task cell to make room — Workamajig's tree indentation sets that cell's padding per depth (and leaves the header
+    // out), so checkboxes would drift and the header's wouldn't move. Instead we pad grid-row-header (the full-width
+    // per-row container) by a fixed amount on EVERY row, header included, so the whole row — checkbox and all — shifts
+    // right into one aligned column. The grip glyph + divider are drawn in the freed gutter via ::after: an empty
+    // divider on every row (the per-row borders stack into one continuous line, through the header too) and the ⠿ glyph
+    // only on the movable rows. Rows are natively position:absolute (virtualized), so the ::after anchors to the row.
+    const GUTTER = 22;
     s.textContent =
       'grid-row.datarow,grid-row.summaryHeader{cursor:grab}' +
       'grid-row.datarow:active,grid-row.summaryHeader:active{cursor:grabbing}' +
-      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";position:absolute;left:0;top:0;bottom:0;width:' + GUTTER + 'px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#9aa7bd;pointer-events:none;z-index:10;border-right:1px solid rgba(0,0,0,.10)}' +
-      'grid-cellgroup.locked grid-cell:first-child{padding-left:' + (GUTTER + 6) + 'px}';
+      'grid-row grid-row-header{padding-left:' + GUTTER + 'px}' +
+      'grid-row::after{content:"";position:absolute;left:0;top:0;bottom:0;width:' + GUTTER + 'px;border-right:1px solid rgba(0,0,0,.12);pointer-events:none;z-index:10}' +
+      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";display:flex;align-items:center;justify-content:center;font-size:13px;color:#9aa7bd}';
     (document.head || document.documentElement).appendChild(s);
   }
   function listDragTick() {
