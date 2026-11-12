@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.58.0';
+  const VERSION = '0.59.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -487,10 +487,16 @@
   function ensureDragStyle() {
     if (document.getElementById('uxa-drag-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-drag-style';
+    // The grip gets its OWN left gutter: the ::after is a full-height box at the row's left edge with the ⠿ glyph
+    // centred and a 1px right divider. Each row's box abuts the next, so the dividers stack into one continuous vertical
+    // line separating the grip column from the checkboxes. We then push the first (locked) cell's content right past the
+    // gutter so the checkbox no longer sits under the grip. CSS-only; survives virtualization.
+    const GUTTER = 24;
     s.textContent =
       'grid-row.datarow,grid-row.summaryHeader{cursor:grab}' +
       'grid-row.datarow:active,grid-row.summaryHeader:active{cursor:grabbing}' +
-      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";position:absolute;left:5px;top:0;bottom:0;display:flex;align-items:center;font-size:13px;color:#9aa7bd;pointer-events:none;z-index:10}';
+      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";position:absolute;left:0;top:0;bottom:0;width:' + GUTTER + 'px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#9aa7bd;pointer-events:none;z-index:10;border-right:1px solid rgba(0,0,0,.10)}' +
+      'grid-cellgroup.locked grid-cell:first-child{padding-left:' + (GUTTER + 6) + 'px}';
     (document.head || document.documentElement).appendChild(s);
   }
   function listDragTick() {
