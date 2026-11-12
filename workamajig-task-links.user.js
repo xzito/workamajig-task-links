@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.52.0';
+  const VERSION = '0.53.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -510,6 +510,66 @@
   }
   function frozenShadowTick() {
     if (document.querySelector('grid-cellgroup.locked')) ensureFrozenStyle();
+  }
+
+  // ---------- Schedule row-detail slideout: rich text for the native Task Description ----------
+  // Gated (sync wraps the nativeDescTick() call with ON('desc.richtext')). The slideout's description is a plain
+  // <textarea name="Description"> in div.taskDetailsSide; we hide it and drop our rich editor (the card-modal one) in its
+  // place, saving through the proven saveTaskDescription path — NOT Workamajig's native save. The task is the selected
+  // schedule row; saveTaskDescription verifies the current server text first, so a wrong key fails safely with no bad
+  // write. Idempotent + re-seeds when a row switch reuses the textarea (unless the user is mid-edit).
+  function ensureNdescStyle() {
+    if (document.getElementById('uxa-ndesc-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-ndesc-style';
+    s.textContent = RTE_CSS +
+      '.uxa-ndesc{margin-top:4px}.uxa-ndesc .rtein{min-height:90px}' +
+      '.uxa-ndesc-row{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}' +
+      '.uxa-ndesc-save{background:#7ab51d;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font:inherit;font-size:12px}' +
+      '.uxa-ndesc-save:disabled{opacity:.6;cursor:default}' +
+      '.uxa-ndesc-cancel{background:#fff;border:1px solid #ccc;border-radius:5px;padding:5px 10px;cursor:pointer;font:inherit;font-size:12px}' +
+      '.uxa-ndesc-msg{font-size:11px;color:#888}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function nativeDescTick() {
+    if (aid() !== 'projects.schedule.edit2') return;
+    const ta = [...document.querySelectorAll('div.taskDetailsSide textarea[name="Description"]')].find(t => t.offsetParent);
+    if (!ta) return;
+    const sel = document.querySelector('#grdProjectSchedule grid-row.datarow[class*="select"][data-key], grid-row.datarow.selected[data-key]');
+    const taskKey = sel ? Number(sel.getAttribute('data-key')) : 0;
+    const pk = qs().get('k');
+    if (!taskKey || !pk) return; // can't tie it to a task yet — retry next tick
+    const cur = ta.value || '';
+    let host = ta.nextElementSibling && ta.nextElementSibling.classList && ta.nextElementSibling.classList.contains('uxa-ndesc') ? ta.nextElementSibling : null;
+    if (host) {
+      // Already enhanced: if a row switch reused this textarea (task/text changed), re-seed — but not while editing.
+      if ((host.dataset.uxaTask !== String(taskKey) || host.dataset.uxaOrig !== cur) && document.activeElement !== host.querySelector('.rtein')) {
+        host.dataset.uxaTask = String(taskKey); host.dataset.uxaOrig = cur;
+        const edEl = host.querySelector('.rtein'); if (edEl) edEl.innerHTML = descToHtml(cur);
+        const m = host.querySelector('.uxa-ndesc-msg'); if (m) m.textContent = '';
+      }
+      return;
+    }
+    ensureNdescStyle();
+    ta.style.display = 'none';
+    host = document.createElement('div');
+    host.className = 'uxa-ndesc';
+    host.dataset.uxaTask = String(taskKey); host.dataset.uxaOrig = cur;
+    host.innerHTML = rteEditor(descToHtml(cur)) +
+      '<div class="uxa-ndesc-row"><button type="button" class="uxa-ndesc-save">Save description</button><button type="button" class="uxa-ndesc-cancel">Revert</button><span class="uxa-ndesc-msg"></span></div>';
+    ta.insertAdjacentElement('afterend', host);
+    wireRte(host.querySelector('.rte'));
+    const msg = m => { const el = host.querySelector('.uxa-ndesc-msg'); if (el) el.textContent = m || ''; };
+    host.querySelector('.uxa-ndesc-cancel').addEventListener('click', e => { e.preventDefault(); const edEl = host.querySelector('.rtein'); if (edEl) edEl.innerHTML = descToHtml(host.dataset.uxaOrig || ''); msg(''); });
+    host.querySelector('.uxa-ndesc-save').addEventListener('click', async e => {
+      e.preventDefault(); const btn = e.currentTarget; btn.disabled = true; msg('Saving…');
+      const tk = Number(host.dataset.uxaTask), orig = host.dataset.uxaOrig || '', html = rteRead(host);
+      try {
+        await saveTaskDescription(qs().get('k'), tk, html, orig);
+        host.dataset.uxaOrig = html; ta.value = html; try { ta.dispatchEvent(new Event('input', { bubbles: true })); ta.dispatchEvent(new Event('change', { bubbles: true })); } catch (err) {}
+        msg('Saved ✓'); toast('Description saved');
+      } catch (err) { msg(''); toast('Could not save: ' + (err && err.message || err)); }
+      btn.disabled = false;
+    });
   }
 
   // ---------- wiring ----------
@@ -3333,6 +3393,7 @@
     listStrikeTick();
     listDragTick();
     frozenShadowTick();
+    nativeDescTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
