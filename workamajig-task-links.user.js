@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.48.0';
+  const VERSION = '0.49.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -486,6 +486,20 @@
   }
   function listDragTick() {
     if (document.querySelector('#grdProjectSchedule')) ensureDragStyle();
+  }
+
+  // ---------- Any Workamajig grid: shadow the frozen (locked) columns so it's obvious they don't scroll ----------
+  // WMJ freezes the first N columns (the grid's "Locked Column Count") as position:sticky grid-cellgroup.locked, with
+  // no visual boundary. A right-edge shadow makes the freeze obvious — globally, on every grid that shares this
+  // structure (Projects, My Time, schedule, …).
+  function ensureFrozenStyle() {
+    if (document.getElementById('uxa-frozen-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-frozen-style';
+    s.textContent = 'grid-cellgroup.locked{box-shadow:6px 0 8px -4px rgba(0,0,0,.22)}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function frozenShadowTick() {
+    if (document.querySelector('grid-cellgroup.locked')) ensureFrozenStyle();
   }
 
   // ---------- wiring ----------
@@ -3306,6 +3320,7 @@
     timersTick();
     listStrikeTick();
     listDragTick();
+    frozenShadowTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
