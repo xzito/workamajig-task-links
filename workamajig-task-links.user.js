@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.56.0';
+  const VERSION = '0.58.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -478,18 +478,19 @@
   }
 
   // ---------- Schedule List view: make it discoverable that rows can be dragged to reorder ----------
-  // Workamajig already handles the drag; it just hides it (the only hint is the grab cursor once you're mid-drag). We
-  // add a grip glyph + grab cursor on row hover so people know a row (parent, summary or task) can be dragged to a new
-  // spot. CSS-only — no DOM injected per row, so it survives the grid's virtualization for free.
+  // Workamajig already handles the drag; it just hides it (the only hint is the grab cursor once you're mid-drag). We add
+  // an always-visible grip glyph in the left gutter + a grab cursor so it's obvious a row can be dragged. Both leaf tasks
+  // (grid-row.datarow) AND summary rows (grid-row.summaryHeader — a different class, which is why they used to be skipped)
+  // are draggable, so both get the grip. The glyph is ::after, not ::before: Workamajig renders the summary chevron as the
+  // row's own ::before, and an element has only one. CSS-only — no per-row DOM — so it survives the grid's virtualization.
+  // NB: rows are natively position:absolute (virtualized via transform); we never set position on them, only the ::after.
   function ensureDragStyle() {
     if (document.getElementById('uxa-drag-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-drag-style';
-    // NB: rows are natively position:absolute (virtualized via transform), so we must NOT set position on them — doing
-    // so clobbers the native layout and overlaps every row. The grip ::before positions against the row's own box.
     s.textContent =
-      'grid-row.datarow:hover{cursor:grab}' +
-      'grid-row.datarow:active{cursor:grabbing}' +
-      'grid-row.datarow:hover::before{content:"\\2800\\283F";position:absolute;left:1px;top:0;bottom:0;display:flex;align-items:center;font-size:12px;letter-spacing:-1px;color:#9aa7bd;pointer-events:none;z-index:5}';
+      'grid-row.datarow,grid-row.summaryHeader{cursor:grab}' +
+      'grid-row.datarow:active,grid-row.summaryHeader:active{cursor:grabbing}' +
+      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";position:absolute;left:5px;top:0;bottom:0;display:flex;align-items:center;font-size:13px;color:#9aa7bd;pointer-events:none;z-index:10}';
     (document.head || document.documentElement).appendChild(s);
   }
   function listDragTick() {
@@ -639,26 +640,30 @@
     el._t = setTimeout(close, 12000);
   }
 
-  // ---------- Projects grid: prefix "$" on dollar columns ----------
+  // ---------- Grids: prefix "$" on dollar columns (across Workamajig) ----------
   // Gated via gridCurrencyOn() (sync -> ON('grid.currency')). Workamajig marks no cell as currency — a grid cell is known
-  // only by column index, and counts, hours and money all look alike. But the grid's row data uses stable native field
-  // names (TotalLaborGross, CurrentBudgetExpenseGross, AdvanceBilled, ...), so we classify a numeric field as money by its
-  // NAME — override-proof, since a Field Label Override changes only the header, not the field — then find which column
-  // shows it by matching cell values to the record, paired by ProjectKey across several rows so a coincidental tie on 0
-  // can't fool it. A <style> prefixes "$" via ::before on those columns, recomputed when the column set changes (a layout
-  // switch). Scope: the Projects dashboard grid (projects.production.dash / grdProductionDash) and its column-set layouts.
+  // only by column index, and counts, hours and money all look alike. But a grid's row data uses stable native field names
+  // (TotalLaborGross, AdvanceBilled, BilledAmount, ...), so we classify a numeric field as money by its NAME — override-
+  // proof, since a Field Label Override changes only the header — then find which column shows it by matching cell values
+  // to the record across several rows (so a coincidental tie on 0 can't fool it). Rows pair to records generically through
+  // the grid controller's rendered vdom (each entry carries .key + .data), so this works on ANY data grid, not just
+  // Projects. A <style> prefixes "$" via ::before on the money columns, recomputed when a grid or column set changes.
   function gridCurrencyOn() { return true; }
-  const CUR_MONEY = f => /gross|profit|budget|billed|amount|cost|expense|labor|advance|revenue|price|deposit|paid|invoice/i.test(f)
-    && !/hours?|hrs|perc|count|qty|number|key|status|color|days?|date|update|locked|isfav|order\b/i.test(f);
+  const CUR_MONEY = f => /gross|profit|budget|billed|amount|cost|expense|labor|advance|revenue|price|deposit|paid|balance|retainer|fee/i.test(f)
+    && !/hours?|hrs|perc|count|qty|number|key|status|color|days?|date|update|locked|isfav|order\b|\bid\b/i.test(f);
   let curSig = '';
-  function curDetect(gridEl, vdata) {
-    const rows = [...gridEl.querySelectorAll('grid-row.datarow[data-key]')];
-    if (rows.length < 2) return [];
-    const recByKey = new Map(vdata.map(d => [String(d.ProjectKey), d]));
+  // One grid -> the column indexes that are money. recByKey pairs a DOM row (data-key) to its record via the controller's
+  // rendered vdom (v.key -> v.data) — generic across grids, no per-grid key field to know.
+  function curDetectGrid(gridEl, ctl) {
+    const recByKey = new Map();
+    for (const v of (ctl.vdom || [])) { if (v && v.data && typeof v.data === 'object') recByKey.set(String(v.key), v.data); }
+    if (!recByKey.size) return [];
     const numeric = new Set();
-    for (const d of vdata.slice(0, 25)) if (d) for (const k in d) if (typeof d[k] === 'number') numeric.add(k);
+    for (const d of recByKey.values()) for (const k in d) if (typeof d[k] === 'number') numeric.add(k);
     const money = [...numeric].filter(CUR_MONEY);
     if (!money.length) return [];
+    const rows = [...gridEl.querySelectorAll('grid-row.datarow[data-key]')].filter(r => recByKey.has(r.getAttribute('data-key')));
+    if (rows.length < 2) return [];
     const sample = rows.find(r => r.querySelector('grid-cell[data-idx]:not(.header)'));
     if (!sample) return [];
     const colIdxs = [...sample.querySelectorAll('grid-cell[data-idx]:not(.header)')].map(c => c.getAttribute('data-idx'));
@@ -667,7 +672,7 @@
       for (const F of money) {
         let ok = 0, seen = 0, first = null, distinct = false, bad = false;
         for (const r of rows) {
-          const rec = recByKey.get(r.getAttribute('data-key')); if (!rec || typeof rec[F] !== 'number') { bad = true; break; }
+          const rec = recByKey.get(r.getAttribute('data-key')); if (typeof rec[F] !== 'number') { bad = true; break; }
           const c = r.querySelector('grid-cell[data-idx="' + idx + '"]:not(.header)'); if (!c) continue;
           const raw = (c.textContent || '').trim(); if (raw === '') continue;
           const num = parseFloat(raw.replace(/[,\s]/g, '')); if (isNaN(num)) { bad = true; break; }
@@ -679,24 +684,36 @@
     }
     return out;
   }
+  // Every data grid on the page that exposes a controller with vdom + keyed data rows.
+  function curGrids() {
+    const seen = new Set(), grids = [];
+    for (const pg of document.querySelectorAll('page.open')) {
+      const gmap = pg.view && pg.view.grids; if (!gmap) continue;
+      const keys = gmap instanceof Map ? [...gmap.keys()] : Object.keys(gmap);
+      for (const gid of keys) {
+        if (!gid || seen.has(gid)) continue; seen.add(gid);
+        const ctl = gmap instanceof Map ? gmap.get(gid) : gmap[gid];
+        const el = document.getElementById(gid);
+        if (el && ctl && Array.isArray(ctl.vdom) && el.querySelector('grid-row.datarow[data-key]')) grids.push({ gid, el, ctl });
+      }
+    }
+    return grids;
+  }
   function gridCurrencyTick() {
     const existing = document.getElementById('uxa-cur-style');
-    if (!gridCurrencyOn() || aid() !== 'projects.production.dash') { if (existing) existing.remove(); curSig = ''; return; }
-    const gridEl = document.getElementById('grdProductionDash');
-    if (!gridEl) return;
-    const pg = [...document.querySelectorAll('page.open[data-aid="projects.production.dash"]')].pop();
-    const ctl = pg && pg.view && pg.view.grids && pg.view.grids.grdProductionDash;
-    const vdata = ctl && ctl.vdata;
-    if (!Array.isArray(vdata) || !vdata.length) return;
-    // Signature = the header set; a layout switch changes it and forces a recompute.
-    const sig = [...gridEl.querySelectorAll('grid-cell.header[data-idx]')].map(h => h.getAttribute('data-idx') + ':' + (h.textContent || '').trim()).join('|');
+    if (!gridCurrencyOn()) { if (existing) existing.remove(); curSig = ''; return; }
+    const grids = curGrids();
+    if (!grids.length) { if (existing) existing.remove(); curSig = ''; return; }
+    // Signature = each grid's id + its header set; a grid opening/closing or a layout switch changes it and recomputes.
+    const sig = grids.map(g => g.gid + ':' + [...g.el.querySelectorAll('grid-cell.header[data-idx]')].map(h => h.getAttribute('data-idx') + (h.textContent || '').trim()).join(',')).join('|');
     if (sig === curSig && existing) return;
-    const idxs = curDetect(gridEl, vdata);
-    if (!idxs.length) return;  // rows not ready yet — retry next tick without locking the signature
+    const rules = [];
+    for (const g of grids) for (const i of curDetectGrid(g.el, g.ctl)) rules.push('#' + g.gid + ' grid-cell[data-idx="' + i + '"]:not(.header):not(:empty)::before{content:"$"}');
+    if (!rules.length) return;  // data not ready yet — retry next tick without locking the signature
     curSig = sig;
     const st = existing || document.createElement('style');
     if (!existing) { st.id = 'uxa-cur-style'; (document.head || document.documentElement).appendChild(st); }
-    st.textContent = idxs.map(i => '#grdProductionDash grid-cell[data-idx="' + i + '"]:not(.header):not(:empty)::before{content:"$"}').join('');
+    st.textContent = rules.join('');
   }
 
   // ---------- Schedule row-detail slideout: rich text for the native Task Description ----------
@@ -2732,7 +2749,10 @@
   }
   function calGridHtml() {
     const byDate = new Map();
-    for (const t of calTasks(board.data)) { if (!board.calShow && t.done) continue; if (!byDate.has(t.date)) byDate.set(t.date, []); byDate.get(t.date).push(t); }
+    // The shared search (Workamajig's own box, synced into board.search) filters the calendar too, like List and Board.
+    const q = board.search.trim().toLowerCase();
+    const matchQ = t => !q || [t.taskId, t.name, t.group].some(v => String(v || '').toLowerCase().includes(q));
+    for (const t of calTasks(board.data)) { if (!board.calShow && t.done) continue; if (!matchQ(t)) continue; if (!byDate.has(t.date)) byDate.set(t.date, []); byDate.get(t.date).push(t); }
     const today = calYmd(new Date());
     const dows = CAL_DOW.map(d => `<div class="cdow">${d}</div>`).join('');
     const cells = calMonthDays(cal.month).map(d => {
