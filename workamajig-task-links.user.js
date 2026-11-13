@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.66.0';
+  const VERSION = '0.67.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -1229,6 +1229,66 @@
     if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
     scheduleCache.delete(String(projectKey));
     return name;
+  }
+
+  // Delete a task from the card details modal. Same schedule-save envelope as the others, but the full task row goes in
+  // tasksDM.deletedItems; Workamajig cascades the task's assignments itself (verified live — no orphaned taskUsers, and
+  // the task count drops by exactly one). Verifies the task still exists and its name matches, so a stale modal can't
+  // delete the wrong task after a reload.
+  async function deleteTask(projectKey, taskKey, expectedName) {
+    projectKey = Number(projectKey); taskKey = Number(taskKey);
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
+      projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
+      application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
+    });
+    const row = (sched.tasks || []).find(t => t.TaskKey === taskKey);
+    if (!row) throw new Error('this task no longer exists (it may already have been deleted); reload');
+    if (expectedName != null) {
+      const norm = v => String(v || '').replace(/\s+/g, ' ').trim();
+      if (norm(row.TaskName) !== norm(expectedName)) throw new Error('this task changed since you opened it; reload before deleting');
+    }
+    const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
+      project, projectKey, tasksDM: { insertedItems: [], updatedItems: [], deletedItems: [row] },
+      taskUsersDM: null, predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      removeProjectUsers: [], addedAssignments: [], tasksFromTemplate: 0,
+      scheduleSessionID: sched.scheduleSessionID, newMods: null, poUpdateList: []
+    }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+    scheduleCache.delete(String(projectKey));
+    return true;
+  }
+
+  // Set an assignment's planned hours (the "planned" number in the card modal is taskUser.Hours). The taskUser row goes
+  // in taskUsersDM.updatedItems with rowstate 'US'; Workamajig recomputes the task's AllocatedHours itself (verified live
+  // — setting Hours to N propagates to the task total). Only the assignment's planned hours change, not the budget/estimate.
+  async function saveAssignmentHours(projectKey, taskUserKey, hours) {
+    projectKey = Number(projectKey); taskUserKey = Number(taskUserKey); hours = Number(hours);
+    if (!isFinite(hours) || hours < 0) throw new Error('enter a number of hours (0 or more)');
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
+      projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
+      application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
+    });
+    const tu = (sched.projectTaskUserData || []).find(x => x.TaskUserKey === taskUserKey);
+    if (!tu) throw new Error('this assignment no longer exists; reload');
+    tu.Hours = hours; tu.rowstate = 'US';
+    const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
+      project, projectKey, tasksDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      taskUsersDM: { insertedItems: [], updatedItems: [tu], deletedItems: [] },
+      predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      removeProjectUsers: [], addedAssignments: [], tasksFromTemplate: 0,
+      scheduleSessionID: sched.scheduleSessionID, newMods: null, poUpdateList: []
+    }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+    scheduleCache.delete(String(projectKey));
+    return hours;
   }
 
   // Set a task's due date the same way saveTaskDescription writes a description: a fresh task row from getSchedule with
@@ -2552,6 +2612,11 @@
       .mnamei { flex: 1; min-width: 0; font: inherit; font-size: 18px; font-weight: 600; color: #222; padding: 6px 10px; border: 1px solid #cfcfcf; border-radius: 8px; }
       .mnamei:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
       .mnamemsg { margin: 0 0 8px; }
+      .mhoursi { width: 90px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid #cfcfcf; border-radius: 8px; }
+      .mhoursi:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
+      .mhrsu { font-size: 12px; color: #999; }
+      .mbtn.mdelete { color: #b3261e; border-color: #e7b7b2; }
+      .mbtn.mdelete:hover { background: #fdecea; border-color: #d9534f; }
       .mx { position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; font-size: 22px; color: #777; cursor: pointer; line-height: 1; }
       .mx:hover { background: #f1f1f1; color: #222; }
       .mstat { display: flex; gap: 8px; align-items: center; }
@@ -2618,7 +2683,8 @@
       if (!board.modal) return;
       if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('tdnew')) { e.preventDefault(); addTodo(); return; }
       if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('mnamei')) { e.preventDefault(); const b = root.querySelector('.mnamesave'); if (b) b.click(); return; }
-      if (e.key === 'Escape') { e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else if (board.modal.editingName) { board.modal.editingName = false; board.modal.nameDraft = null; board.modal.nameMsg = ''; renderModal(); } else closeModal(); }
+      if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('mhoursi')) { e.preventDefault(); const b = root.querySelector('.mhourssave'); if (b) b.click(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else if (board.modal.editingName) { board.modal.editingName = false; board.modal.nameDraft = null; board.modal.nameMsg = ''; renderModal(); } else if (board.modal.editingHours) { board.modal.editingHours = false; board.modal.hoursDraft = null; board.modal.hoursMsg = ''; renderModal(); } else closeModal(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && board.modal.editing) { e.preventDefault(); const b = root.querySelector('.msave'); if (b) b.click(); }
     });
     root.addEventListener('click', onBoardClick);
@@ -2986,7 +3052,7 @@
   // ---- card details modal ----
   // Swallow Escape at the window (capture) while a board/calendar modal is open, so Workamajig's own close-page
   // handler never sees it and only the modal closes.
-  window.addEventListener('keydown', e => { if (e.key === 'Escape' && board.on && board.modal) { e.stopImmediatePropagation(); e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else if (board.modal.editingName) { board.modal.editingName = false; board.modal.nameDraft = null; board.modal.nameMsg = ''; renderModal(); } else closeModal(); } }, true);
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && board.on && board.modal) { e.stopImmediatePropagation(); e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else if (board.modal.editingName) { board.modal.editingName = false; board.modal.nameDraft = null; board.modal.nameMsg = ''; renderModal(); } else if (board.modal.editingHours) { board.modal.editingHours = false; board.modal.hoursDraft = null; board.modal.hoursMsg = ''; renderModal(); } else closeModal(); } }, true);
   function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; board.host.style.zIndex = '40'; renderModal(); const x = board.root && board.root.querySelector('.mx'); if (x) x.focus(); }
   function closeModal() { board.modal = null; if (board.host) board.host.style.zIndex = '10'; const bg = board.root && board.root.querySelector('.mbg'); if (bg) bg.remove(); }
   const linkify = txt => esc(txt).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
@@ -2995,7 +3061,7 @@
   function renderModal() {
     const st = board.modal; if (!st || !board.data) return;
     const old = board.root.querySelector('.mbg');
-    if (old) { const ed = old.querySelector('.rtein'); if (ed) st.draftHtml = ed.innerHTML; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; const ni = old.querySelector('.mnamei'); if (ni) st.nameDraft = ni.value; const ob = old.querySelector('.mbody'); if (ob) st.scrollTop = ob.scrollTop; }
+    if (old) { const ed = old.querySelector('.rtein'); if (ed) st.draftHtml = ed.innerHTML; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; const ni = old.querySelector('.mnamei'); if (ni) st.nameDraft = ni.value; const hi = old.querySelector('.mhoursi'); if (hi) st.hoursDraft = hi.value; const ob = old.querySelector('.mbody'); if (ob) st.scrollTop = ob.scrollTop; }
     const raw = board.data, ref = st.ref;
     const t = (raw.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
     const tu = ref.tuk ? (raw.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
@@ -3026,7 +3092,9 @@
             ? `<div class="mrow"><input type="date" class="mduei" value="${String((tu && tu.APlanComplete) || t.PlanComplete || '').slice(0, 10)}"><button type="button" class="mbtn primary mduesave">Save</button><button type="button" class="mbtn mduecancel">Cancel</button></div>`
             : `<div>${fmtDate((tu && tu.APlanComplete) || t.PlanComplete)}${canEdit ? ' <button type="button" class="mlink medue">Change</button>' : ''}</div>`}</div>
           <div><label>Planned</label><div>${fmtDate(t.PlanStart)} → ${fmtDate(t.PlanComplete)}</div></div>
-          ${tu ? `<div><label>Hours</label><div class="${planned && actual > planned ? 'over' : ''}">${fmtH(actual)} logged of ${fmtH(planned)} planned</div></div>` : ''}
+          ${tu ? `<div><label>Hours</label>${st.editingHours
+            ? `<div class="mrow"><input type="number" class="mhoursi" min="0" step="0.25" value="${st.hoursDraft != null ? esc(st.hoursDraft) : planned}"><span class="mhrsu">planned hours</span><button type="button" class="mbtn primary mhourssave">Save</button><button type="button" class="mbtn mhourscancel">Cancel</button></div>${st.hoursMsg ? `<div class="mmsg">${esc(st.hoursMsg)}</div>` : ''}`
+            : `<div class="${planned && actual > planned ? 'over' : ''}">${fmtH(actual)} logged of ${fmtH(planned)} planned${canEdit && taskHoursOn() ? ' <button type="button" class="mlink mhoursedit">Change</button>' : ''}</div>`}</div>` : ''}
         </div>
         <label>Task description</label>${descHtml}
         ${st.msg ? `<div class="mmsg">${esc(st.msg)}</div>` : ''}
@@ -3039,6 +3107,7 @@
         <button type="button" class="mbtn mlist">Show in list</button>
         ${timeActionsOn() && timerEligible(t) ? '<button type="button" class="mbtn mtimer" title="Start a Workamajig timer on this task (shows in My Time)">Start timer</button>' : ''}
         <span class="spacer"></span>
+        ${canEdit && taskDeleteOn() ? '<button type="button" class="mbtn mdelete" title="Delete this task from the schedule">Delete task</button>' : ''}
         <button type="button" class="mbtn mcopyt" title="Copy a link that opens the schedule and spotlights this task"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.75A1.25 1.25 0 009.25 2.5h-5.5A1.25 1.25 0 002.5 3.75v5.5a1.25 1.25 0 001.25 1.25H5.5"/></svg>Copy task link</button>
         ${tu ? `<button type="button" class="mbtn mcopya" title="Copy the link to this assignment page"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.75A1.25 1.25 0 009.25 2.5h-5.5A1.25 1.25 0 002.5 3.75v5.5a1.25 1.25 0 001.25 1.25H5.5"/></svg>Copy assignment link</button>` : ''}
       </div></div></div>`;
@@ -3078,6 +3147,7 @@
       }
     }
     else if (st.editingName) { const ni = board.root.querySelector('.mnamei'); if (ni && document.activeElement !== ni) { ni.focus(); ni.select(); } }
+    else if (st.editingHours) { const hi = board.root.querySelector('.mhoursi'); if (hi && document.activeElement !== hi) { hi.focus(); hi.select(); } }
     else if (st.focusTodo) { const ti = board.root.querySelector('.tdnew'); if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); } st.focusTodo = false; }
     const sel = board.root.querySelector('.mstatus');
     if (sel) sel.addEventListener('change', () => moveAssignment(ref.tuk, Number(sel.value)));
@@ -3195,11 +3265,36 @@
     if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
     if (t.classList.contains('mcopya')) { copy(urls.assignment(ref.tuk), 'assignment link'); return; }
-    if (t.classList.contains('madd')) { st.editing = true; st.editingName = false; st.draftHtml = ''; st.base = ''; st.msg = ''; renderModal(); return; }
-    if (t.classList.contains('medit')) { st.editing = true; st.editingName = false; st.base = task.Description || ''; st.draftHtml = null; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('madd')) { st.editing = true; st.editingName = false; st.editingHours = false; st.draftHtml = ''; st.base = ''; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('medit')) { st.editing = true; st.editingName = false; st.editingHours = false; st.base = task.Description || ''; st.draftHtml = null; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mcancel')) { st.editing = false; st.msg = ''; renderModal(); return; }
-    if (t.classList.contains('mrename')) { st.editingName = true; st.editing = false; st.nameDraft = null; st.nameMsg = ''; renderModal(); return; }
+    if (t.classList.contains('mrename')) { st.editingName = true; st.editing = false; st.editingHours = false; st.nameDraft = null; st.nameMsg = ''; renderModal(); return; }
     if (t.classList.contains('mnamecancel')) { st.editingName = false; st.nameDraft = null; st.nameMsg = ''; renderModal(); return; }
+    if (t.classList.contains('mhoursedit')) { st.editingHours = true; st.editing = false; st.editingName = false; st.hoursDraft = null; st.hoursMsg = ''; renderModal(); return; }
+    if (t.classList.contains('mhourscancel')) { st.editingHours = false; st.hoursDraft = null; st.hoursMsg = ''; renderModal(); return; }
+    if (t.classList.contains('mhourssave')) {
+      if (!ref.tuk) { st.editingHours = false; renderModal(); return; }
+      const inp = board.root.querySelector('.mhoursi'); const raw = inp ? inp.value.trim() : '';
+      const val = Number(raw);
+      if (raw === '' || !isFinite(val) || val < 0) { st.hoursMsg = 'Enter a number of hours (0 or more).'; st.hoursDraft = raw; renderModal(); return; }
+      t.disabled = true; t.textContent = 'Saving…';
+      try {
+        await saveAssignmentHours(board.projectKey, ref.tuk, val);
+        if (tu) tu.Hours = val;
+        st.editingHours = false; st.hoursDraft = null; st.hoursMsg = ''; toast('Planned hours updated');
+      } catch (err) { st.hoursMsg = 'Could not update hours: ' + (err && err.message || err); st.hoursDraft = raw; }
+      renderBoard(); renderModal();
+      return;
+    }
+    if (t.classList.contains('mdelete')) {
+      if (!confirm(`Delete the task "${(task.TaskName || 'this task').trim()}"? This removes it and its assignments from the schedule and can't be undone.`)) return;
+      t.disabled = true; t.textContent = 'Deleting…';
+      try {
+        await deleteTask(board.projectKey, ref.taskKey, task.TaskName || '');
+        toast('Task deleted'); closeModal(); await loadBoard();
+      } catch (err) { st.msg = 'Could not delete: ' + (err && err.message || err); renderModal(); }
+      return;
+    }
     if (t.classList.contains('mnamesave')) {
       const inp = board.root.querySelector('.mnamei'); const val = (inp && inp.value || '').trim();
       if (!val) { st.nameMsg = 'Enter a task name.'; st.nameDraft = ''; renderModal(); return; }
@@ -3254,6 +3349,10 @@
   // TimesheetTimer.newTimer (core.js, present on every page), so it shows up in My Time exactly like the native one.
   // Gate for renaming a task from the card details modal (sync rewrites taskRenameOn() to ON('board.taskrename')).
   function taskRenameOn() { return true; }
+  // Gate for editing an assignment's planned hours from the card modal (sync -> ON('board.taskhours')).
+  function taskHoursOn() { return true; }
+  // Gate for deleting a task from the card modal (sync -> ON('board.taskdelete')). Destructive, so it ships default-off.
+  function taskDeleteOn() { return true; }
   function timeActionsOn() { return true; }
   const timerEligible = t => !!t && Number(t.MoneyTask) === 1 && String(t.TaskType).toLowerCase() !== 'summary';
   function startTimerFor(projectKey, taskKey, tuk) {
