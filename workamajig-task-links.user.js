@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.65.0';
+  const VERSION = '0.66.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -1198,6 +1198,37 @@
     if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
     scheduleCache.delete(String(projectKey));
     return true;
+  }
+
+  // Rename a task the same proven way saveTaskDescription writes a description: a fresh task row from getSchedule with
+  // only TaskName changed, sent in the schedule's save envelope with rowstate 'US' (the same path Workamajig uses when
+  // you edit a task name inline on the schedule). Verifies the current server name first, so a stale edit fails safely.
+  async function saveTaskName(projectKey, taskKey, name, expected) {
+    projectKey = Number(projectKey); taskKey = Number(taskKey);
+    name = String(name || '').trim();
+    if (!name) throw new Error('enter a task name');
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
+      projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
+      application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
+    });
+    const row = (sched.tasks || []).find(t => t.TaskKey === taskKey);
+    if (!row) throw new Error('task not found in the schedule');
+    const norm = v => String(v || '').replace(/\s+/g, ' ').trim();
+    if (norm(row.TaskName) !== norm(expected)) throw new Error('someone else renamed this task while you were editing; reload to see their version');
+    row.TaskName = name; row.rowstate = 'US';
+    const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
+      project, projectKey, tasksDM: { insertedItems: [], updatedItems: [row], deletedItems: [] },
+      taskUsersDM: null, predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      removeProjectUsers: [], addedAssignments: [], tasksFromTemplate: 0,
+      scheduleSessionID: sched.scheduleSessionID, newMods: null, poUpdateList: []
+    }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+    scheduleCache.delete(String(projectKey));
+    return name;
   }
 
   // Set a task's due date the same way saveTaskDescription writes a description: a fresh task row from getSchedule with
@@ -2516,6 +2547,11 @@
       .mhead { position: relative; padding: 18px 56px 12px 22px; border-bottom: 1px solid #eee; }
       .mtop { display: flex; gap: 8px; font-size: 12px; color: #888; }
       .mtitle { margin: 4px 0 10px; font-size: 20px; font-weight: 600; color: #222; line-height: 1.3; }
+      .mtitle .mrename { font-size: 12px; font-weight: 500; vertical-align: middle; margin-left: 8px; }
+      .mnameedit { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; }
+      .mnamei { flex: 1; min-width: 0; font: inherit; font-size: 18px; font-weight: 600; color: #222; padding: 6px 10px; border: 1px solid #cfcfcf; border-radius: 8px; }
+      .mnamei:focus { outline: none; border-color: #7ab51d; box-shadow: 0 0 0 3px rgba(122,181,29,.18); }
+      .mnamemsg { margin: 0 0 8px; }
       .mx { position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; font-size: 22px; color: #777; cursor: pointer; line-height: 1; }
       .mx:hover { background: #f1f1f1; color: #222; }
       .mstat { display: flex; gap: 8px; align-items: center; }
@@ -2581,7 +2617,8 @@
       }
       if (!board.modal) return;
       if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('tdnew')) { e.preventDefault(); addTodo(); return; }
-      if (e.key === 'Escape') { e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); }
+      if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('mnamei')) { e.preventDefault(); const b = root.querySelector('.mnamesave'); if (b) b.click(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else if (board.modal.editingName) { board.modal.editingName = false; board.modal.nameDraft = null; board.modal.nameMsg = ''; renderModal(); } else closeModal(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && board.modal.editing) { e.preventDefault(); const b = root.querySelector('.msave'); if (b) b.click(); }
     });
     root.addEventListener('click', onBoardClick);
@@ -2949,7 +2986,7 @@
   // ---- card details modal ----
   // Swallow Escape at the window (capture) while a board/calendar modal is open, so Workamajig's own close-page
   // handler never sees it and only the modal closes.
-  window.addEventListener('keydown', e => { if (e.key === 'Escape' && board.on && board.modal) { e.stopImmediatePropagation(); e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else closeModal(); } }, true);
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && board.on && board.modal) { e.stopImmediatePropagation(); e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else if (board.modal.editingName) { board.modal.editingName = false; board.modal.nameDraft = null; board.modal.nameMsg = ''; renderModal(); } else closeModal(); } }, true);
   function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; board.host.style.zIndex = '40'; renderModal(); const x = board.root && board.root.querySelector('.mx'); if (x) x.focus(); }
   function closeModal() { board.modal = null; if (board.host) board.host.style.zIndex = '10'; const bg = board.root && board.root.querySelector('.mbg'); if (bg) bg.remove(); }
   const linkify = txt => esc(txt).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
@@ -2958,7 +2995,7 @@
   function renderModal() {
     const st = board.modal; if (!st || !board.data) return;
     const old = board.root.querySelector('.mbg');
-    if (old) { const ed = old.querySelector('.rtein'); if (ed) st.draftHtml = ed.innerHTML; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; const ob = old.querySelector('.mbody'); if (ob) st.scrollTop = ob.scrollTop; }
+    if (old) { const ed = old.querySelector('.rtein'); if (ed) st.draftHtml = ed.innerHTML; const ti = old.querySelector('.tdnew'); if (ti) st.tdDraft = ti.value; const ni = old.querySelector('.mnamei'); if (ni) st.nameDraft = ni.value; const ob = old.querySelector('.mbody'); if (ob) st.scrollTop = ob.scrollTop; }
     const raw = board.data, ref = st.ref;
     const t = (raw.tasks || []).find(x => x.TaskKey === ref.taskKey) || {};
     const tu = ref.tuk ? (raw.projectTaskUserData || []).find(x => x.TaskUserKey === ref.tuk) : null;
@@ -2978,7 +3015,9 @@
     const html = `<div class="mbg"><div class="modal" role="dialog" aria-modal="true" style="--c:${color}">
       <div class="mhead"><div class="mtop"><span class="id">${esc(t.TaskID || '')}</span><span class="grp">${esc(t.SummaryTaskName || '')}</span></div>
         <button type="button" class="mx" title="Close (Esc)">×</button>
-        <h2 class="mtitle">${esc(t.TaskName || '(task)')}</h2>
+        ${st.editingName
+          ? `<div class="mnameedit"><input type="text" class="mnamei" aria-label="Task name" value="${esc(st.nameDraft != null ? st.nameDraft : (t.TaskName || ''))}"><button type="button" class="mbtn primary mnamesave">Save</button><button type="button" class="mbtn mnamecancel">Cancel</button></div>${st.nameMsg ? `<div class="mmsg mnamemsg">${esc(st.nameMsg)}</div>` : ''}`
+          : `<h2 class="mtitle">${esc(t.TaskName || '(task)')}${canEdit && taskRenameOn() ? ' <button type="button" class="mlink mrename" title="Rename this task">Rename</button>' : ''}</h2>`}
         <div class="mstat">${statusSel}${tu && +tu.PercComp ? `<span class="b">${+tu.PercComp}% complete</span>` : ''}</div></div>
       <div class="mcols"><div class="mbody">
         <div class="mgrid">
@@ -3038,6 +3077,7 @@
         }
       }
     }
+    else if (st.editingName) { const ni = board.root.querySelector('.mnamei'); if (ni && document.activeElement !== ni) { ni.focus(); ni.select(); } }
     else if (st.focusTodo) { const ti = board.root.querySelector('.tdnew'); if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); } st.focusTodo = false; }
     const sel = board.root.querySelector('.mstatus');
     if (sel) sel.addEventListener('change', () => moveAssignment(ref.tuk, Number(sel.value)));
@@ -3155,9 +3195,23 @@
     if (t.classList.contains('massign')) { closeModal(); openNativeAssign(ref.taskKey); return; }
     if (t.classList.contains('mcopyt')) { copy(urls.task(board.projectKey, ref.taskKey), 'task link'); return; }
     if (t.classList.contains('mcopya')) { copy(urls.assignment(ref.tuk), 'assignment link'); return; }
-    if (t.classList.contains('madd')) { st.editing = true; st.draftHtml = ''; st.base = ''; st.msg = ''; renderModal(); return; }
-    if (t.classList.contains('medit')) { st.editing = true; st.base = task.Description || ''; st.draftHtml = null; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('madd')) { st.editing = true; st.editingName = false; st.draftHtml = ''; st.base = ''; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('medit')) { st.editing = true; st.editingName = false; st.base = task.Description || ''; st.draftHtml = null; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mcancel')) { st.editing = false; st.msg = ''; renderModal(); return; }
+    if (t.classList.contains('mrename')) { st.editingName = true; st.editing = false; st.nameDraft = null; st.nameMsg = ''; renderModal(); return; }
+    if (t.classList.contains('mnamecancel')) { st.editingName = false; st.nameDraft = null; st.nameMsg = ''; renderModal(); return; }
+    if (t.classList.contains('mnamesave')) {
+      const inp = board.root.querySelector('.mnamei'); const val = (inp && inp.value || '').trim();
+      if (!val) { st.nameMsg = 'Enter a task name.'; st.nameDraft = ''; renderModal(); return; }
+      if (val === String(task.TaskName || '').trim()) { st.editingName = false; st.nameDraft = null; st.nameMsg = ''; renderModal(); return; }
+      t.disabled = true; t.textContent = 'Saving…';
+      try {
+        await saveTaskName(board.projectKey, ref.taskKey, val, task.TaskName || '');
+        task.TaskName = val; st.editingName = false; st.nameDraft = null; st.nameMsg = ''; toast('Task renamed');
+      } catch (err) { st.nameMsg = 'Could not rename: ' + (err && err.message || err); st.nameDraft = val; }
+      renderBoard(); renderModal();
+      return;
+    }
     if (t.classList.contains('medue')) { st.editingDue = true; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mduecancel')) { st.editingDue = false; st.msg = ''; renderModal(); return; }
     if (t.classList.contains('mduesave')) {
@@ -3198,6 +3252,8 @@
   // Time actions. Gate (sync rewrites timeActionsOn() to ON('time.actions')). Only money/budget tasks accept time, so
   // we only offer "Start timer" there (and not on summary rows). Starting the timer uses Workamajig's own global
   // TimesheetTimer.newTimer (core.js, present on every page), so it shows up in My Time exactly like the native one.
+  // Gate for renaming a task from the card details modal (sync rewrites taskRenameOn() to ON('board.taskrename')).
+  function taskRenameOn() { return true; }
   function timeActionsOn() { return true; }
   const timerEligible = t => !!t && Number(t.MoneyTask) === 1 && String(t.TaskType).toLowerCase() !== 'summary';
   function startTimerFor(projectKey, taskKey, tuk) {
