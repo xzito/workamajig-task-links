@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.64.0';
+  const VERSION = '0.65.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3624,6 +3624,63 @@
     }
   }
 
+  // ---------- My Time: show each task's status + % complete next to the task ----------
+  // Workamajig's My Time grid (user.timeEntry.edit, grid id grdDay40) lists time entries with a Task column but no sign
+  // of how far along the task is. We resolve each row's TimeKey -> project/task (getTime, cached per date), read the
+  // task's PercComp / ActComplete from the project schedule (getSchedule, cached per project), and drop a small pill into
+  // the Task cell: "● In progress · 60%". Status is derived from completion — the task carries no status label, and the
+  // per-assignee status usually isn't set for whoever logged the time, so completion is the one signal that's always
+  // there. Overlay only: a pill appended to the cell, re-applied each tick so it survives the grid's virtualization, and
+  // cleared when the feature is switched off. Gated via timeStatusOn() (sync rewrites it to ON('time.taskstatus')).
+  function timeStatusOn() { return true; }
+  const tstatCache = new Map(); // TimeKey -> {label,color,pc} | 'pending' | 'none'
+  function ensureTimeStatusStyle() {
+    if (document.getElementById('uxa-tstat-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-tstat-style';
+    s.textContent = '.uxa-tstat{display:inline-flex;align-items:center;gap:5px;margin-left:8px;padding:1px 8px;border-radius:999px;background:#eef1f4;color:#44515e;font-size:11px;font-weight:600;vertical-align:middle;white-space:nowrap;line-height:1.5}'
+      + '.uxa-tstat .d{width:7px;height:7px;border-radius:50%;flex:none}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  async function tstatResolve(timeKey, wd) {
+    tstatCache.set(timeKey, 'pending');
+    try {
+      let hit = (await getTime(wd)).get(timeKey);
+      if (!hit && wd) hit = (await getTime(null)).get(timeKey);
+      if (!hit || !(Number(hit.taskKey) > 0)) { tstatCache.set(timeKey, 'none'); return; }
+      const sched = await getSchedule(hit.projectKey);
+      const t = ((sched.raw && sched.raw.tasks) || []).find(x => Number(x.TaskKey) === Number(hit.taskKey));
+      if (!t) { tstatCache.set(timeKey, 'none'); return; }
+      const pc = Math.round(+t.PercComp || 0);
+      const done = !!t.ActComplete || pc >= 100;
+      const label = done ? 'Complete' : pc > 0 ? 'In progress' : 'Not started';
+      const color = done ? '#1a7f37' : pc > 0 ? '#1a6dc4' : '#8a8a8a';
+      tstatCache.set(timeKey, { label, color, pc: done ? 100 : pc });
+    } catch (e) { tstatCache.delete(timeKey); }
+  }
+  function timeStatusTick() {
+    if (!timeStatusOn()) { document.querySelectorAll('.uxa-tstat').forEach(el => el.remove()); return; }
+    if (aid() !== 'user.timeEntry.edit') return;
+    ensureTimeStatusStyle();
+    const wd = pageDate();
+    for (const row of document.querySelectorAll('grid-row.datarow')) {
+      const key = row.dataset.key;
+      if (!/^[0-9a-f-]{36}$/i.test(key || '')) continue;
+      const cell = row.querySelector('grid-cell[data-idx="1"]');
+      if (!cell || !cell.textContent.trim()) continue; // wait until the task name is rendered
+      const existing = cell.querySelector('.uxa-tstat');
+      if (existing && existing.dataset.key === key) continue; // already correct for this row
+      const info = tstatCache.get(key);
+      if (info === undefined) { tstatResolve(key, wd); continue; } // fetch, render next tick
+      if (info === 'pending') continue;
+      if (existing) existing.remove();
+      if (info === 'none') continue;
+      const pill = document.createElement('span');
+      pill.className = 'uxa-tstat'; pill.dataset.key = key;
+      pill.innerHTML = `<span class="d" style="background:${info.color}"></span>${esc(info.label)}${info.pc ? ' · ' + info.pc + '%' : ''}`;
+      cell.appendChild(pill);
+    }
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -3646,6 +3703,7 @@
     nativeDescTick();
     ntaTick();
     gridCurrencyTick();
+    timeStatusTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
