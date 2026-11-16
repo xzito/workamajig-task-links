@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.69.0';
+  const VERSION = '0.70.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3750,21 +3750,24 @@
     }
   }
 
-  // ---------- My Time: show each task's status + % complete next to the task ----------
+  // ---------- My Time: show each task's status next to the task, editable where you're assigned ----------
   // Workamajig's My Time grid (user.timeEntry.edit, grid id grdDay40) lists time entries with a Task column but no sign
-  // of how far along the task is. We resolve each row's TimeKey -> project/task (getTime, cached per date), read the
-  // task's PercComp / ActComplete from the project schedule (getSchedule, cached per project), and drop a small pill into
-  // the Task cell: "● In progress · 60%". Status is derived from completion — the task carries no status label, and the
-  // per-assignee status usually isn't set for whoever logged the time, so completion is the one signal that's always
-  // there. Overlay only: a pill appended to the cell, re-applied each tick so it survives the grid's virtualization, and
-  // cleared when the feature is switched off. Gated via timeStatusOn() (sync rewrites it to ON('time.taskstatus')).
+  // of where the work stands. We resolve each row's TimeKey -> project/task/user (getTime, cached per date) and read the
+  // project schedule (getSchedule, cached per project). Two cases: if you HAVE an assignment on the task, we show its real
+  // workflow status as an EDITABLE dropdown (the board statuses) and write changes via the board's updateAssignmentStatus;
+  // if you don't (you can log time on tasks you're not assigned to), we fall back to a read-only pill with the status
+  // derived from % complete ("● In progress · 60%"). Overlay only: appended to the Task cell, re-applied each tick so it
+  // survives the grid's virtualization, cleared when the feature is off. Gated via timeStatusOn() (-> ON('time.taskstatus')).
   function timeStatusOn() { return true; }
   const tstatCache = new Map(); // TimeKey -> {label,color,pc} | 'pending' | 'none'
   function ensureTimeStatusStyle() {
     if (document.getElementById('uxa-tstat-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-tstat-style';
     s.textContent = '.uxa-tstat{display:inline-flex;align-items:center;gap:5px;margin-left:8px;padding:1px 8px;border-radius:999px;background:#eef1f4;color:#44515e;font-size:11px;font-weight:600;vertical-align:middle;white-space:nowrap;line-height:1.5}'
-      + '.uxa-tstat .d{width:7px;height:7px;border-radius:50%;flex:none}';
+      + '.uxa-tstat .d{width:7px;height:7px;border-radius:50%;flex:none}'
+      + '.uxa-tstat.uxa-tstat-edit{padding-right:2px}'
+      + ".uxa-tstat-sel{font:inherit;font-size:11px;font-weight:600;color:#44515e;border:0;background:transparent;cursor:pointer;appearance:none;-webkit-appearance:none;padding:0 15px 0 1px;line-height:1.5;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2344515e' stroke-width='1.5'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 2px center;background-size:8px 5px}"
+      + '.uxa-tstat-sel:focus{outline:none}';
     (document.head || document.documentElement).appendChild(s);
   }
   async function tstatResolve(timeKey, wd) {
@@ -3774,14 +3777,50 @@
       if (!hit && wd) hit = (await getTime(null)).get(timeKey);
       if (!hit || !(Number(hit.taskKey) > 0)) { tstatCache.set(timeKey, 'none'); return; }
       const sched = await getSchedule(hit.projectKey);
-      const t = ((sched.raw && sched.raw.tasks) || []).find(x => Number(x.TaskKey) === Number(hit.taskKey));
+      const raw = sched.raw || {};
+      const t = (raw.tasks || []).find(x => Number(x.TaskKey) === Number(hit.taskKey));
       if (!t) { tstatCache.set(timeKey, 'none'); return; }
       const pc = Math.round(+t.PercComp || 0);
       const done = !!t.ActComplete || pc >= 100;
+      // If this user has an assignment on the task, show the real, EDITABLE workflow status (the board statuses). Writing
+      // reuses the board's updateAssignmentStatus. You can log time on tasks you aren't assigned to, so an unassigned row
+      // has no assignment status to change — those fall back to the read-only derived pill below.
+      const tu = (raw.projectTaskUserData || []).find(x => Number(x.TaskKey) === Number(hit.taskKey) && Number(x.UserKey) === Number(hit.userKey));
+      if (tu && Number(tu.TaskUserKey) > 0) {
+        const options = (raw.taskUserStatus || []).map(x => ({ k: x.k, l: x.l }));
+        const statusKey = tu.TaskUserStatusKey > 0 ? tu.TaskUserStatusKey : 0;
+        const statusName = (tu.StatusName || '').trim();
+        const color = STATUS_COLORS[statusName] || (done ? '#1a7f37' : pc > 0 ? '#1a6dc4' : '#8a8a8a');
+        tstatCache.set(timeKey, { tuk: Number(tu.TaskUserKey), statusKey, statusName, options, color });
+        return;
+      }
       const label = done ? 'Complete' : pc > 0 ? 'In progress' : 'Not started';
       const color = done ? '#1a7f37' : pc > 0 ? '#1a6dc4' : '#8a8a8a';
       tstatCache.set(timeKey, { label, color, pc: done ? 100 : pc });
     } catch (e) { tstatCache.delete(timeKey); }
+  }
+  // Write a new workflow status for an assigned My Time row, the same way the board does (updateAssignmentStatus).
+  async function tstatSetStatus(sel) {
+    const key = sel.dataset.key, tuk = Number(sel.dataset.tuk), newKey = Number(sel.value);
+    const info = tstatCache.get(key);
+    if (!info || typeof info !== 'object' || !tuk) return;
+    const prevKey = Number(info.statusKey) || 0;
+    if (newKey === prevKey) return;
+    sel.disabled = true;
+    try {
+      const res = await call('WJAPP.Modules.Project.Traffic', 'updateAssignmentStatus', { TaskUserKey: tuk, TaskUserStatusKey: newKey }, true);
+      if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+      const opt = (info.options || []).find(o => o.k === newKey);
+      info.statusKey = newKey; info.statusName = opt ? opt.l : '';
+      info.color = STATUS_COLORS[info.statusName] || '#8a8a8a';
+      tstatCache.set(key, info);
+      const dot = sel.parentElement && sel.parentElement.querySelector('.d');
+      if (dot) dot.style.background = info.color;
+      toast('Status updated');
+    } catch (e) {
+      sel.value = String(prevKey);
+      toast('Could not update status: ' + (e && e.message || e));
+    } finally { sel.disabled = false; }
   }
   function timeStatusTick() {
     if (!timeStatusOn()) { document.querySelectorAll('.uxa-tstat').forEach(el => el.remove()); return; }
@@ -3800,10 +3839,24 @@
       if (info === 'pending') continue;
       if (existing) existing.remove();
       if (info === 'none') continue;
-      const pill = document.createElement('span');
-      pill.className = 'uxa-tstat'; pill.dataset.key = key;
-      pill.innerHTML = `<span class="d" style="background:${info.color}"></span>${esc(info.label)}${info.pc ? ' · ' + info.pc + '%' : ''}`;
-      cell.appendChild(pill);
+      if (info.tuk) {
+        // Assigned: an editable dropdown of the real workflow statuses.
+        const wrap = document.createElement('span');
+        wrap.className = 'uxa-tstat uxa-tstat-edit'; wrap.dataset.key = key;
+        const noStatus = Number(info.statusKey) > 0 ? '' : '<option value="0" selected>No status</option>';
+        const opts = (info.options || []).map(o => `<option value="${o.k}"${o.k === info.statusKey ? ' selected' : ''}>${esc(o.l)}</option>`).join('');
+        wrap.innerHTML = `<span class="d" style="background:${info.color}"></span><select class="uxa-tstat-sel" data-key="${esc(key)}" data-tuk="${info.tuk}" title="Change this assignment's status">${noStatus}${opts}</select>`;
+        const sel = wrap.querySelector('select');
+        sel.addEventListener('change', () => tstatSetStatus(sel));
+        sel.addEventListener('mousedown', e => e.stopPropagation()); // let the native dropdown open, not the grid's cell edit
+        sel.addEventListener('click', e => e.stopPropagation());
+        cell.appendChild(wrap);
+      } else {
+        const pill = document.createElement('span');
+        pill.className = 'uxa-tstat'; pill.dataset.key = key;
+        pill.innerHTML = `<span class="d" style="background:${info.color}"></span>${esc(info.label)}${info.pc ? ' · ' + info.pc + '%' : ''}`;
+        cell.appendChild(pill);
+      }
     }
   }
 
