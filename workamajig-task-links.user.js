@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.73.0';
+  const VERSION = '0.74.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3860,12 +3860,11 @@
     }
   }
 
-  // ---------- Any grouped grid: a visible Collapse all / Expand all toggle ----------
-  // Workamajig buries Collapse All / Expand All in the "..." menu. We float a labeled toggle in the gap above the grid's
-  // column header (right-aligned, re-positioned each tick so it tracks the header). It drives WMJ's own per-group twisty
-  // — a synthetic click on each summary row's tree cell — looping so nested groups open/close too. Shown only where a
-  // grouped grid is on screen (grid-row.summaryHeader) and NOT on the board/calendar overlay. Gated via expandAllOn()
-  // (sync rewrites it to ON('grid.expandall')).
+  // ---------- Grouped grids: a visible Collapse all / Expand all toggle in the page header ----------
+  // Workamajig buries Collapse All / Expand All in the "…" menu. We add a labeled toggle right after that header "…" menu
+  // button (My Time, the schedule List, the Projects list). It drives WMJ's own per-group twisty — a synthetic click on
+  // each summary row's tree cell — looping so nested groups open/close too. Shown only on those pages (XALL_AIDS) when a
+  // grouped grid is present and NOT on the board/calendar overlay. Gated via expandAllOn() (-> ON('grid.expandall')).
   function expandAllOn() { return true; }
   function toggleGroupRow(sh) {
     const cell = sh.querySelector('grid-cell.dgTree') || sh.querySelector('grid-cell');
@@ -3890,17 +3889,25 @@
   function ensureExpandAllStyle() {
     if (document.getElementById('uxa-xall-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-xall-style';
-    s.textContent = '#uxa-xall{position:fixed;z-index:50;font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#2b6cb0;background:#eef3fb;border:1px solid #cfe0f5;border-radius:999px;padding:5px 11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}'
+    s.textContent = '#uxa-xall{margin-left:10px;vertical-align:middle;font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#2b6cb0;background:#eef3fb;border:1px solid #cfe0f5;border-radius:999px;padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}'
       + '#uxa-xall:hover{background:#e2ecfa;border-color:#b9d3f2}'
       + '#uxa-xall:disabled{opacity:.6;cursor:default}';
     (document.head || document.documentElement).appendChild(s);
   }
+  // The grouped grids that make sense (and where the header "…" menu lives): My Time, the schedule List, the Projects
+  // list. Excludes dashboards and other views (e.g. the project dashboard, where there's nothing to collapse).
+  const XALL_AIDS = ['user.timeEntry.edit', 'projects.schedule.edit2', 'projects.production.dash'];
   function expandAllTick() {
     const old = document.getElementById('uxa-xall');
-    if (!expandAllOn() || (typeof board !== 'undefined' && board && board.on)) { if (old) old.remove(); return; }
-    const groups = document.querySelectorAll('grid-row.summaryHeader');
-    const hdr = document.querySelector('grid-row.column-header-2') || document.querySelector('grid-row.column-header');
-    if (!groups.length || !hdr) { if (old) old.remove(); return; }
+    if (!expandAllOn() || XALL_AIDS.indexOf(aid()) < 0 || (typeof board !== 'undefined' && board && board.on)) { if (old) old.remove(); return; }
+    const sh = document.querySelector('grid-row.summaryHeader');
+    if (!sh) { if (old) old.remove(); return; }
+    // Anchor to the active page's header "…" menu button (scoped to the page so overlays pick their own header).
+    const page = sh.closest('page') || document;
+    const anchor = [...page.querySelectorAll('button[data-action="menu"]')]
+      .map(b => ({ b, r: b.getBoundingClientRect() })).filter(x => x.r.width > 0)
+      .sort((a, b) => a.r.y - b.r.y).map(x => x.b)[0];
+    if (!anchor) { if (old) old.remove(); return; }
     ensureExpandAllStyle();
     let b = old;
     if (!b) {
@@ -3911,19 +3918,11 @@
         b.disabled = true;
         setAllGroups(collapse).catch(() => {}).then(() => { b.disabled = false; });
       });
-      document.body.appendChild(b);
     }
-    const hr = hdr.getBoundingClientRect();
-    if (!hr.width) { b.style.display = 'none'; return; }
-    b.style.display = '';
+    if (b.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', b); // keep it right after the "…" menu
     const collapse = !!document.querySelector('grid-row.summaryHeader.expanded');
     const label = collapse ? 'Collapse all' : 'Expand all';
-    const want = XALL_ICON(collapse) + '<span>' + label + '</span>';
-    if (b.dataset.label !== label) { b.innerHTML = want; b.dataset.label = label; }
-    const grid = document.querySelector('[id^="grd"]');
-    const right = Math.min(grid ? grid.getBoundingClientRect().right : hr.right, window.innerWidth - 16);
-    b.style.top = Math.max(hr.top - 30, 68) + 'px';
-    b.style.left = (right - b.offsetWidth) + 'px';
+    if (b.dataset.label !== label) { b.innerHTML = XALL_ICON(collapse) + '<span>' + label + '</span>'; b.dataset.label = label; }
   }
 
   // ---------- "Today" assignee views: filter the assignment cards down to one project ----------
