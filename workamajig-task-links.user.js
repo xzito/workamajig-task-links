@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.68.0';
+  const VERSION = '0.69.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -495,7 +495,10 @@
       // where the shadow would otherwise dangle as a stray stub in the footer band.
       + 'grid-row.main:not(.datarow):not(.summaryHeader):not(.summaryFooter):not(.column-header-2):not(.column-header) grid-cellgroup.locked{box-shadow:none}'
       + 'grid-cellgroup.locked grid-cell:last-child{padding-right:12px}'
-      + 'grid-cellgroup.unlocked grid-cell:first-child{padding-left:10px}';
+      + 'grid-cellgroup.unlocked grid-cell:first-child{padding-left:10px}'
+      // Same idea for the pinned insert-row bar (grid-toolbar), which stays above the scrolling rows: a hard top line +
+      // a soft upward shadow (box-shadow, so no layout shift) make it read as a frozen bar the content tucks under.
+      + 'grid-toolbar{box-shadow:0 -1px 0 rgba(0,0,0,.14), 0 -6px 8px -4px rgba(0,0,0,.16);position:relative;z-index:6}';
     (document.head || document.documentElement).appendChild(s);
   }
   function frozenShadowTick() {
