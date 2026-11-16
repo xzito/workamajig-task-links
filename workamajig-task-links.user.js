@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.75.0';
+  const VERSION = '0.76.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4000,6 +4000,33 @@
     creativeApply();
   }
 
+  // ---------- Grid note cells: show "//"-separated / bulleted notes on their own lines ----------
+  // Some grids (e.g. the Projects list) have free-text custom fields people use as notes, typed on one line with " // "
+  // between bullet items ("• Jan 31 … // • Feb 28 …") because the field is single-line. We reformat the DISPLAY of any
+  // leaf grid-cell div whose text uses that separator (or has 2+ bullets) so each item sits on its own line (white-space:
+  // pre-line). Display only — editing still shows the stored one-line value. We reformat a cell ONCE (guarded by a data
+  // attribute set to our output), so there's no mutation loop; on the grid's virtualized recycle the text changes and we
+  // reformat the new value. Gated via noteBreaksOn() (sync rewrites it to ON('grid.notebreaks')).
+  function noteBreaksOn() { return true; }
+  function formatNote(t) {
+    // Split only on a spaced " // " separator (whitespace before the //), never the "://" or "/a//b" inside a URL.
+    return t.replace(/\s+\/\/\s*/g, '\n').replace(/\s*•\s+/g, '\n• ').replace(/^\s*\n/, '').replace(/\n{2,}/g, '\n').replace(/[ \t]+$/gm, '').trim();
+  }
+  function noteBreaksTick() {
+    if (!noteBreaksOn()) return;
+    for (const div of document.querySelectorAll('grid-cell div')) {
+      if (div.children.length) continue; // leaf text only
+      const t = div.textContent || '';
+      if (div.dataset.uxaNb === t) continue; // already our formatted output for this value
+      if (!/\s\/\/\s/.test(t) && (t.match(/•/g) || []).length < 2) continue; // only "//"-separated or multi-bullet notes
+      const out = formatNote(t);
+      if (out === t) { div.dataset.uxaNb = t; continue; }
+      div.style.whiteSpace = 'pre-line';
+      div.textContent = out;
+      div.dataset.uxaNb = out;
+    }
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -4024,6 +4051,7 @@
     timeStatusTick();
     expandAllTick();
     creativeFilterTick();
+    noteBreaksTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
