@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.67.0';
+  const VERSION = '0.68.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -180,8 +180,10 @@
   function ensureUi() {
     if (btn) return;
     btn = document.createElement('button');
-    btn.type = 'button'; btn.id = 'uxa-btn'; btn.title = 'Copy link to this task / assignment'; btn.textContent = '🔗';
-    btn.style.cssText = 'position:fixed;z-index:99998;display:none;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;line-height:1;padding:2px 4px;box-shadow:0 1px 3px rgba(0,0,0,.15)';
+    btn.type = 'button'; btn.id = 'uxa-btn'; btn.title = 'Copy link to this task / assignment';
+    // WMJ's own row-action affordance is a "…" pill; match it instead of a link glyph (three dots, same grey oval).
+    btn.innerHTML = '<svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.5" cy="8" r="1.4"/></svg>';
+    btn.style.cssText = 'position:fixed;z-index:99998;display:none;border:1px solid #d7dbe0;border-radius:999px;background:#eef1f4;color:#5b6670;cursor:pointer;line-height:0;padding:4px 7px;box-shadow:0 1px 2px rgba(0,0,0,.12)';
     btn.addEventListener('mousedown', e => e.stopPropagation());
     btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); openMenu(); });
     btn.addEventListener('mouseenter', () => { btn.dataset.hover = '1'; });
@@ -477,43 +479,6 @@
     grid.querySelectorAll('grid-row.datarow[data-key]').forEach(r => r.classList.toggle('uxa-done', strikeSet.has(Number(r.dataset.key))));
   }
 
-  // ---------- Schedule List view: make it discoverable that rows can be dragged to reorder ----------
-  // Workamajig already handles the drag; it just hides it (the only hint is the grab cursor once you're mid-drag). We add
-  // an always-visible grip glyph in the left gutter + a grab cursor so it's obvious a row can be dragged. Both leaf tasks
-  // (grid-row.datarow) AND summary rows (grid-row.summaryHeader — a different class, which is why they used to be skipped)
-  // are draggable, so both get the grip. The glyph is ::after, not ::before: Workamajig renders the summary chevron as the
-  // row's own ::before, and an element has only one. CSS-only — no per-row DOM — so it survives the grid's virtualization.
-  // NB: rows are natively position:absolute (virtualized via transform); we never set position on them, only the ::after.
-  function ensureDragStyle() {
-    if (document.getElementById('uxa-drag-style')) return;
-    const s = document.createElement('style'); s.id = 'uxa-drag-style';
-    // The grip gets its own left gutter with a divider, laid out so it never sits under the checkbox. We can't pad the
-    // task cell to make room — Workamajig's tree indentation sets that cell's padding per depth (and leaves the header
-    // out), so checkboxes would drift and the header's wouldn't move. Instead we pad grid-row-header (the full-width
-    // per-row container) by a fixed amount on EVERY row, header included, so the whole row — checkbox and all — shifts
-    // right into one aligned column. The grip glyph + divider are drawn in the freed gutter via ::after: an empty
-    // divider on every row (the per-row borders stack into one continuous line, through the header too) and the ⠿ glyph
-    // only on the movable rows. Rows are natively position:absolute (virtualized), so the ::after anchors to the row.
-    const GUTTER = 22;
-    // The hand (open on hover, fist on hold) belongs ONLY to the grip, not the whole row — the grip is the drag handle.
-    // So the cursor lives on the gutter ::after (made hit-testable with pointer-events:auto); the rest of the row keeps
-    // its normal cursor. Events still target the row, so Workamajig's own row handling is unaffected. On macOS grab /
-    // grabbing render as the classic open-hand / closed-fist. The empty divider ::after on other rows stays
-    // pointer-events:none so it never swallows clicks.
-    // Last rule: Workamajig natively reveals ~28px action icons (edit / add / “…”) on hover, which stretch the row's flex
-    // line and make it grow taller. We cap those icons to the text line height on hover so the row height stays put.
-    s.textContent =
-      'grid-row grid-row-header{padding-left:' + GUTTER + 'px}' +
-      'grid-row::after{content:"";position:absolute;left:0;top:0;bottom:0;width:' + GUTTER + 'px;border-right:1px solid rgba(0,0,0,.12);pointer-events:none;z-index:10}' +
-      'grid-row.datarow::after,grid-row.summaryHeader::after{content:"\\283F";display:flex;align-items:center;justify-content:center;font-size:13px;color:#9aa7bd;pointer-events:auto;cursor:grab}' +
-      'grid-row.datarow:active::after,grid-row.summaryHeader:active::after{cursor:grabbing}' +
-      'grid-row.datarow:hover grid-cell .btn-action.icon,grid-row.summaryHeader:hover grid-cell .btn-action.icon{max-height:18px;min-height:0}';
-    (document.head || document.documentElement).appendChild(s);
-  }
-  function listDragTick() {
-    if (document.querySelector('#grdProjectSchedule')) ensureDragStyle();
-  }
-
   // ---------- Any Workamajig grid: shadow the frozen (locked) columns so it's obvious they don't scroll ----------
   // WMJ freezes the first N columns (the grid's "Locked Column Count") as position:sticky grid-cellgroup.locked, with
   // no visual boundary. A right-edge shadow makes the freeze obvious — globally, on every grid that shares this
@@ -526,6 +491,9 @@
     // ...plus a little breathing room so the frozen column's text doesn't crowd the shadow line, and the first
     // scrolling column doesn't start hard against it.
     s.textContent = 'grid-cellgroup.locked{box-shadow:1px 0 0 rgba(0,0,0,.14), 6px 0 8px -4px rgba(0,0,0,.16)}'
+      // ...but not on the empty filler row below the content (a bare grid-row.main with no header/data/summary class),
+      // where the shadow would otherwise dangle as a stray stub in the footer band.
+      + 'grid-row.main:not(.datarow):not(.summaryHeader):not(.summaryFooter):not(.column-header-2):not(.column-header) grid-cellgroup.locked{box-shadow:none}'
       + 'grid-cellgroup.locked grid-cell:last-child{padding-right:12px}'
       + 'grid-cellgroup.unlocked grid-cell:first-child{padding-left:10px}';
     (document.head || document.documentElement).appendChild(s);
@@ -2402,7 +2370,7 @@
       document.head.appendChild(st);
     }
     st.textContent = hidden
-      ? 'page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleTemplates"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleSide"],page.open[data-aid="projects.schedule.edit2"] div.input-control.lookup:has(> input[data-source="colSets"]){display:none!important}'
+      ? 'page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleGantt"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleTemplates"],page.open[data-aid="projects.schedule.edit2"] button[data-action="toggleSide"],page.open[data-aid="projects.schedule.edit2"] button[data-action="save"],page.open[data-aid="projects.schedule.edit2"] div.input-control.lookup:has(> input[data-source="colSets"]){display:none!important}'
       : '';
   }
 
@@ -3853,7 +3821,6 @@
     searchTick();
     timersTick();
     listStrikeTick();
-    listDragTick();
     frozenShadowTick();
     nativeDescTick();
     ntaTick();
