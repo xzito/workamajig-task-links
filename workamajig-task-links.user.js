@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.77.0';
+  const VERSION = '0.78.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -265,6 +265,18 @@
     body.innerHTML = '';
     if (!ref) { item('<i>No task on this row</i>'); return; }
     if (ref.generic) { item('Copy link', ref.label, () => copy(ref.generic, 'link')); return; }
+
+    // "Go to project" — jump straight to this project's sub-pages. Not shown on the Schedule page (already in-project).
+    if (projectMenuOn() && ref.projectKey && aid() !== 'projects.schedule.edit2') {
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'padding:6px 12px 2px;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#999';
+      hdr.textContent = 'Go to project';
+      body.appendChild(hdr);
+      projectNavItems(ref.projectKey).forEach(n => item(n.label, n.sub, n.open));
+      const hr = document.createElement('div');
+      hr.style.cssText = 'margin:4px 0;border-top:1px solid #eee';
+      body.appendChild(hr);
+    }
 
     const t = ref.taskKey && sched && sched.tasks.get(ref.taskKey);
     const taskLabel = t ? `${t.id} - ${t.name}` : rowName(row);
@@ -3324,6 +3336,27 @@
   function taskHoursOn() { return true; }
   // Gate for deleting a task from the card modal (sync -> ON('board.taskdelete')). Destructive, so it ships default-off.
   function taskDeleteOn() { return true; }
+  // Gate for the "Go to project" links in the row "…" menu (sync -> ON('nav.projectmenu')). Navigation only; no writes.
+  function projectMenuOn() { return true; }
+  // Project sub-pages, keyed by project. aid strings are Workamajig's own (captured from the project dashboard tabs);
+  // Views.openPage(new Action(aid, projectKey)) opens each the way the native tabs do. The finance screens are shown
+  // only when System.hasRight() says this user can reach them (edit rights imply view), so a user without access never
+  // sees a link that would dead-end on Workamajig's own "no access" screen.
+  function hasRightSafe(k) { try { return !!(window.System && typeof System.hasRight === 'function' && System.hasRight(k)); } catch (e) { return false; } }
+  function projectNavItems(projectKey) {
+    const pk = projectKey;
+    const items = [
+      { label: 'Project overview', sub: 'the project dashboard', aidName: 'dashboards.project.dash' },
+      { label: 'Schedule', sub: 'tasks, assignments and dates', aidName: 'projects.schedule.edit2' },
+      { label: 'Conversations', sub: 'the project diary', aidName: 'projects.diary.dash' }
+    ];
+    const canTran = hasRightSafe('billingviewtran') || hasRightSafe('billingedittran');
+    const canInvoice = hasRightSafe('billingviewinvoice') || hasRightSafe('billingeditinvoice');
+    if (canTran) items.push({ label: 'Transactions', sub: 'posted time, costs and bills', aidName: 'projects.production.transactions' });
+    if (canTran) items.push({ label: 'Budget', sub: 'the project budget', aidName: 'projects.budget.dash' });
+    if (canInvoice) items.push({ label: 'Billing', sub: 'invoices for this project', aidName: 'projects.billing.dash' });
+    return items.map(it => ({ label: it.label, sub: it.sub, open: () => openApp(it.aidName, pk) }));
+  }
   function timeActionsOn() { return true; }
   const timerEligible = t => !!t && Number(t.MoneyTask) === 1 && String(t.TaskType).toLowerCase() !== 'summary';
   function startTimerFor(projectKey, taskKey, tuk) {
