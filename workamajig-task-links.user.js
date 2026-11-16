@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.76.0';
+  const VERSION = '0.77.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4014,16 +4014,17 @@
   }
   function noteBreaksTick() {
     if (!noteBreaksOn()) return;
-    for (const div of document.querySelectorAll('grid-cell div')) {
-      if (div.children.length) continue; // leaf text only
-      const t = div.textContent || '';
-      if (div.dataset.uxaNb === t) continue; // already our formatted output for this value
+    // The note text lives in a leaf element inside the cell — often a <span>, not a <div> (e.g. span.usr), so match both.
+    for (const el of document.querySelectorAll('grid-cell div, grid-cell span')) {
+      if (el.children.length) continue; // leaf text only
+      const t = el.textContent || '';
+      if (el.dataset.uxaNb === t) continue; // already our formatted output for this value
       if (!/\s\/\/\s/.test(t) && (t.match(/•/g) || []).length < 2) continue; // only "//"-separated or multi-bullet notes
       const out = formatNote(t);
-      if (out === t) { div.dataset.uxaNb = t; continue; }
-      div.style.whiteSpace = 'pre-line';
-      div.textContent = out;
-      div.dataset.uxaNb = out;
+      if (out === t) { el.dataset.uxaNb = t; continue; }
+      el.style.whiteSpace = 'pre-line';
+      el.textContent = out;
+      el.dataset.uxaNb = out;
     }
   }
 
