@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.72.0';
+  const VERSION = '0.73.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3926,20 +3926,37 @@
     b.style.left = (right - b.offsetWidth) + 'px';
   }
 
-  // ---------- "Today" assignee views: filter the grouped assignment cards down to one project ----------
+  // ---------- "Today" assignee views: filter the assignment cards down to one project ----------
   // The Today pages (today.creative, …) group your assignment cards by project but — unlike the To Do board — give no way
-  // to narrow to one project. We add a Project dropdown under the Tasks search that hides the project groups you didn't
-  // pick (grouped card view, the default). Gated via creativeFilterOn() (sync rewrites it to ON('today.projectfilter')).
-  let creativeProj = '';
+  // to narrow to one project. We add a Project dropdown under the Tasks search that hides the cards for projects you didn't
+  // pick, in the card AND board layouts (both render .ac-card, which hides cleanly). The list layout is a virtualized grid
+  // where hiding rows leaves gaps, so it's skipped. Matching is by project number (stable across layouts). Gated via
+  // creativeFilterOn() (sync rewrites it to ON('today.projectfilter')).
+  let creativeProj = ''; // selected project NUMBER (e.g. "26-C-LAFE-0151"), '' = all
   function creativeFilterOn() { return true; }
-  function todayProjGroups() {
-    return [...document.querySelectorAll('h2')]
-      .filter(h => /^\d{2}-[A-Z0-9]/.test((h.textContent || '').trim()))
-      .map(h => ({ li: h.closest('li'), name: (h.textContent || '').trim() }))
-      .filter(g => g.li);
+  const projKeyOf = s => { const m = /^(\d{2}-(?:[A-Z]-)?[A-Z0-9]+-\d{3,4})/.exec((s || '').trim()); return m ? m[1] : (s || '').trim(); };
+  const isProjText = s => /^\d{2}-[A-Z0-9]/.test((s || '').trim());
+  function creativeProjects() {
+    const map = new Map(); // projKey -> full display name
+    document.querySelectorAll('h2').forEach(h => { const t = (h.textContent || '').trim(); if (isProjText(t)) map.set(projKeyOf(t), t); });
+    document.querySelectorAll('.ac-card .ac-title').forEach(a => { const t = (a.textContent || '').trim(); if (isProjText(t) && !map.has(projKeyOf(t))) map.set(projKeyOf(t), t); });
+    return [...map.entries()].map(([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name));
   }
-  function creativeApply(groups) {
-    groups.forEach(g => { g.li.style.display = (!creativeProj || g.name === creativeProj) ? '' : 'none'; });
+  const creativeCardHost = card => card.closest('li, taskcard') || card;
+  function creativeApply() {
+    const sel = creativeProj;
+    document.querySelectorAll('.ac-card').forEach(card => {
+      const a = card.querySelector('.ac-title');
+      const match = !sel || projKeyOf(a ? a.textContent : '') === sel;
+      creativeCardHost(card).style.display = match ? '' : 'none';
+    });
+    // card layout: hide a project group header (an h2-headed li) when none of its cards are visible
+    document.querySelectorAll('h2').forEach(h => {
+      if (!isProjText(h.textContent)) return;
+      const gli = h.closest('li'); if (!gli) return;
+      const anyVisible = [...gli.querySelectorAll('.ac-card')].some(c => creativeCardHost(c).style.display !== 'none');
+      gli.style.display = (!sel || anyVisible) ? '' : 'none';
+    });
   }
   function ensureCreativeFilterStyle() {
     if (document.getElementById('uxa-pf-style')) return;
@@ -3951,28 +3968,28 @@
   }
   function creativeFilterTick() {
     const existing = document.getElementById('uxa-projfilter');
-    if (!creativeFilterOn() || aid().indexOf('today.') !== 0) { if (existing) existing.remove(); return; }
+    // Only the card/board layouts (they render .ac-card); the list layout is a virtualized grid we don't hide-filter.
+    if (!creativeFilterOn() || aid().indexOf('today.') !== 0 || !document.querySelector('.ac-card')) { if (existing) existing.remove(); return; }
     const search = document.querySelector('.frmTaskSearch');
-    const groups = todayProjGroups();
-    if (!search || groups.length < 2) { if (existing) existing.remove(); return; } // nothing to filter with 0–1 projects
+    const projects = creativeProjects();
+    if (!search || projects.length < 2) { if (existing) existing.remove(); return; } // nothing to filter with 0–1 projects
     ensureCreativeFilterStyle();
     let wrap = existing;
     if (!wrap) {
       wrap = document.createElement('label'); wrap.id = 'uxa-projfilter'; wrap.className = 'uxa-projfilter';
       wrap.innerHTML = '<span>Project</span><select aria-label="Filter by project"></select>';
-      wrap.querySelector('select').addEventListener('change', e => { creativeProj = e.target.value; creativeApply(todayProjGroups()); });
+      wrap.querySelector('select').addEventListener('change', e => { creativeProj = e.target.value; creativeApply(); });
       (search.parentElement || search).appendChild(wrap);
     }
     const sel = wrap.querySelector('select');
-    const names = groups.map(g => g.name);
-    const sig = names.join('|');
+    const sig = projects.map(p => p.key).join('|');
     if (sel.dataset.sig !== sig) {
-      if (creativeProj && names.indexOf(creativeProj) < 0) creativeProj = '';
-      sel.innerHTML = '<option value="">All projects</option>' + names.map(n => `<option value="${esc(n)}"${n === creativeProj ? ' selected' : ''}>${esc(n.length > 46 ? n.slice(0, 44) + '…' : n)}</option>`).join('');
+      if (creativeProj && !projects.some(p => p.key === creativeProj)) creativeProj = '';
+      sel.innerHTML = '<option value="">All projects</option>' + projects.map(p => `<option value="${esc(p.key)}"${p.key === creativeProj ? ' selected' : ''}>${esc(p.name.length > 46 ? p.name.slice(0, 44) + '…' : p.name)}</option>`).join('');
       sel.value = creativeProj;
       sel.dataset.sig = sig;
     }
-    creativeApply(groups);
+    creativeApply();
   }
 
   function tick() {
