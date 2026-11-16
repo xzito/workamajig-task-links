@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.70.0';
+  const VERSION = '0.71.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3860,6 +3860,72 @@
     }
   }
 
+  // ---------- Any grouped grid: a visible Collapse all / Expand all toggle ----------
+  // Workamajig buries Collapse All / Expand All in the "..." menu. We float a labeled toggle in the gap above the grid's
+  // column header (right-aligned, re-positioned each tick so it tracks the header). It drives WMJ's own per-group twisty
+  // — a synthetic click on each summary row's tree cell — looping so nested groups open/close too. Shown only where a
+  // grouped grid is on screen (grid-row.summaryHeader) and NOT on the board/calendar overlay. Gated via expandAllOn()
+  // (sync rewrites it to ON('grid.expandall')).
+  function expandAllOn() { return true; }
+  function toggleGroupRow(sh) {
+    const cell = sh.querySelector('grid-cell.dgTree') || sh.querySelector('grid-cell');
+    if (!cell) return;
+    const r = cell.getBoundingClientRect();
+    const x = r.left + 10, y = r.top + r.height / 2;
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(t =>
+      cell.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, clientX: x, clientY: y })));
+  }
+  async function setAllGroups(collapse) {
+    // Nested groups appear/disappear as parents toggle (and WMJ updates a tick late), so re-query and repeat. Capped.
+    for (let pass = 0; pass < 12; pass++) {
+      const rows = [...document.querySelectorAll('grid-row.summaryHeader')]
+        .filter(sh => collapse ? sh.classList.contains('expanded') : sh.classList.contains('collapsed'));
+      if (!rows.length) break;
+      rows.forEach(toggleGroupRow);
+      await new Promise(r => setTimeout(r, 120));
+    }
+  }
+  const XALL_ICON = c => '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' +
+    (c ? 'M7 4l5 5 5-5M7 20l5-5 5 5' : 'M7 9l5-5 5 5M7 15l5 5 5-5') + '"/></svg>';
+  function ensureExpandAllStyle() {
+    if (document.getElementById('uxa-xall-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-xall-style';
+    s.textContent = '#uxa-xall{position:fixed;z-index:50;font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#2b6cb0;background:#eef3fb;border:1px solid #cfe0f5;border-radius:999px;padding:5px 11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}'
+      + '#uxa-xall:hover{background:#e2ecfa;border-color:#b9d3f2}'
+      + '#uxa-xall:disabled{opacity:.6;cursor:default}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function expandAllTick() {
+    const old = document.getElementById('uxa-xall');
+    if (!expandAllOn() || (typeof board !== 'undefined' && board && board.on)) { if (old) old.remove(); return; }
+    const groups = document.querySelectorAll('grid-row.summaryHeader');
+    const hdr = document.querySelector('grid-row.column-header-2') || document.querySelector('grid-row.column-header');
+    if (!groups.length || !hdr) { if (old) old.remove(); return; }
+    ensureExpandAllStyle();
+    let b = old;
+    if (!b) {
+      b = document.createElement('button'); b.id = 'uxa-xall'; b.type = 'button';
+      b.addEventListener('click', e => {
+        e.preventDefault(); e.stopPropagation();
+        const collapse = !!document.querySelector('grid-row.summaryHeader.expanded');
+        b.disabled = true;
+        setAllGroups(collapse).catch(() => {}).then(() => { b.disabled = false; });
+      });
+      document.body.appendChild(b);
+    }
+    const hr = hdr.getBoundingClientRect();
+    if (!hr.width) { b.style.display = 'none'; return; }
+    b.style.display = '';
+    const collapse = !!document.querySelector('grid-row.summaryHeader.expanded');
+    const label = collapse ? 'Collapse all' : 'Expand all';
+    const want = XALL_ICON(collapse) + '<span>' + label + '</span>';
+    if (b.dataset.label !== label) { b.innerHTML = want; b.dataset.label = label; }
+    const grid = document.querySelector('[id^="grd"]');
+    const right = Math.min(grid ? grid.getBoundingClientRect().right : hr.right, window.innerWidth - 16);
+    b.style.top = Math.max(hr.top - 30, 68) + 'px';
+    b.style.left = (right - b.offsetWidth) + 'px';
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -3882,6 +3948,7 @@
     ntaTick();
     gridCurrencyTick();
     timeStatusTick();
+    expandAllTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
