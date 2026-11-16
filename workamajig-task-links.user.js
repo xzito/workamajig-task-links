@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.71.0';
+  const VERSION = '0.72.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3926,6 +3926,55 @@
     b.style.left = (right - b.offsetWidth) + 'px';
   }
 
+  // ---------- "Today" assignee views: filter the grouped assignment cards down to one project ----------
+  // The Today pages (today.creative, …) group your assignment cards by project but — unlike the To Do board — give no way
+  // to narrow to one project. We add a Project dropdown under the Tasks search that hides the project groups you didn't
+  // pick (grouped card view, the default). Gated via creativeFilterOn() (sync rewrites it to ON('today.projectfilter')).
+  let creativeProj = '';
+  function creativeFilterOn() { return true; }
+  function todayProjGroups() {
+    return [...document.querySelectorAll('h2')]
+      .filter(h => /^\d{2}-[A-Z0-9]/.test((h.textContent || '').trim()))
+      .map(h => ({ li: h.closest('li'), name: (h.textContent || '').trim() }))
+      .filter(g => g.li);
+  }
+  function creativeApply(groups) {
+    groups.forEach(g => { g.li.style.display = (!creativeProj || g.name === creativeProj) ? '' : 'none'; });
+  }
+  function ensureCreativeFilterStyle() {
+    if (document.getElementById('uxa-pf-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-pf-style';
+    s.textContent = '.uxa-projfilter{display:inline-flex;align-items:center;gap:6px;margin:8px 0 0;font:12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#667;vertical-align:middle}'
+      + ".uxa-projfilter select{font:inherit;font-size:13px;color:#222;padding:6px 26px 6px 10px;border:1px solid #d0d0d0;border-radius:8px;background:#fff;max-width:240px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23667788' stroke-width='1.5'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 9px center;background-size:9px 6px}"
+      + '.uxa-projfilter select:focus{outline:none;border-color:#7ab51d;box-shadow:0 0 0 3px rgba(122,181,29,.15)}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function creativeFilterTick() {
+    const existing = document.getElementById('uxa-projfilter');
+    if (!creativeFilterOn() || aid().indexOf('today.') !== 0) { if (existing) existing.remove(); return; }
+    const search = document.querySelector('.frmTaskSearch');
+    const groups = todayProjGroups();
+    if (!search || groups.length < 2) { if (existing) existing.remove(); return; } // nothing to filter with 0–1 projects
+    ensureCreativeFilterStyle();
+    let wrap = existing;
+    if (!wrap) {
+      wrap = document.createElement('label'); wrap.id = 'uxa-projfilter'; wrap.className = 'uxa-projfilter';
+      wrap.innerHTML = '<span>Project</span><select aria-label="Filter by project"></select>';
+      wrap.querySelector('select').addEventListener('change', e => { creativeProj = e.target.value; creativeApply(todayProjGroups()); });
+      (search.parentElement || search).appendChild(wrap);
+    }
+    const sel = wrap.querySelector('select');
+    const names = groups.map(g => g.name);
+    const sig = names.join('|');
+    if (sel.dataset.sig !== sig) {
+      if (creativeProj && names.indexOf(creativeProj) < 0) creativeProj = '';
+      sel.innerHTML = '<option value="">All projects</option>' + names.map(n => `<option value="${esc(n)}"${n === creativeProj ? ' selected' : ''}>${esc(n.length > 46 ? n.slice(0, 44) + '…' : n)}</option>`).join('');
+      sel.value = creativeProj;
+      sel.dataset.sig = sig;
+    }
+    creativeApply(groups);
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -3949,6 +3998,7 @@
     gridCurrencyTick();
     timeStatusTick();
     expandAllTick();
+    creativeFilterTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
