@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.74.0';
+  const VERSION = '0.75.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3861,10 +3861,12 @@
   }
 
   // ---------- Grouped grids: a visible Collapse all / Expand all toggle in the page header ----------
-  // Workamajig buries Collapse All / Expand All in the "…" menu. We add a labeled toggle right after that header "…" menu
-  // button (My Time, the schedule List, the Projects list). It drives WMJ's own per-group twisty — a synthetic click on
-  // each summary row's tree cell — looping so nested groups open/close too. Shown only on those pages (XALL_AIDS) when a
-  // grouped grid is present and NOT on the board/calendar overlay. Gated via expandAllOn() (-> ON('grid.expandall')).
+  // Workamajig buries Collapse All / Expand All in the "…" menu. We float a labeled toggle right beside that header "…"
+  // menu button (My Time, the schedule List, the Projects list) — body-appended and positioned from the anchor's rect, so
+  // we never mutate WMJ's toolbar (inserting into it made the schedule re-render and strip the button in a loop). It drives
+  // WMJ's own per-group twisty — a synthetic click on each summary row's tree cell — looping so nested groups open/close
+  // too. Shown only on those pages (XALL_AIDS) when a grouped grid is present and not on the board/calendar overlay.
+  // Gated via expandAllOn() (-> ON('grid.expandall')).
   function expandAllOn() { return true; }
   function toggleGroupRow(sh) {
     const cell = sh.querySelector('grid-cell.dgTree') || sh.querySelector('grid-cell');
@@ -3889,7 +3891,7 @@
   function ensureExpandAllStyle() {
     if (document.getElementById('uxa-xall-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-xall-style';
-    s.textContent = '#uxa-xall{margin-left:10px;vertical-align:middle;font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#2b6cb0;background:#eef3fb;border:1px solid #cfe0f5;border-radius:999px;padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}'
+    s.textContent = '#uxa-xall{position:fixed;z-index:40;font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#2b6cb0;background:#eef3fb;border:1px solid #cfe0f5;border-radius:999px;padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}'
       + '#uxa-xall:hover{background:#e2ecfa;border-color:#b9d3f2}'
       + '#uxa-xall:disabled{opacity:.6;cursor:default}';
     (document.head || document.documentElement).appendChild(s);
@@ -3918,11 +3920,18 @@
         b.disabled = true;
         setAllGroups(collapse).catch(() => {}).then(() => { b.disabled = false; });
       });
+      document.body.appendChild(b); // float on <body>, NOT inside WMJ's toolbar — mutating the toolbar makes some pages
+      // (the schedule) re-render and strip it, a flicker/thrash loop. We only READ the anchor's position, never touch it.
     }
-    if (b.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', b); // keep it right after the "…" menu
     const collapse = !!document.querySelector('grid-row.summaryHeader.expanded');
     const label = collapse ? 'Collapse all' : 'Expand all';
     if (b.dataset.label !== label) { b.innerHTML = XALL_ICON(collapse) + '<span>' + label + '</span>'; b.dataset.label = label; }
+    // Float just to the right of the header "…" menu, vertically centered on it.
+    const r = anchor.getBoundingClientRect();
+    if (!r.width) { b.style.display = 'none'; return; }
+    b.style.display = '';
+    b.style.top = (r.top + (r.height - (b.offsetHeight || 30)) / 2) + 'px';
+    b.style.left = (r.right + 10) + 'px';
   }
 
   // ---------- "Today" assignee views: filter the assignment cards down to one project ----------
