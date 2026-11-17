@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.86.0';
+  const VERSION = '0.87.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -3955,6 +3955,50 @@
     }
   }
 
+  // The inline time-entry editor (My Time day/week, grid-row.editing) has a "done" checkbox but no way to set the task's
+  // workflow STATUS. We add a labelled Status dropdown next to it, resolving the row's assignment and writing changes the
+  // exact same way the status column does (tstatResolve + tstatSetStatus, i.e. updateAssignmentStatus). Only for tasks
+  // you're assigned to (others have no assignment status to change). Shares the time.taskstatus toggle + cache.
+  function ensureEditorStatusStyle() {
+    if (document.getElementById('uxa-estat-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-estat-style';
+    s.textContent = '.uxa-estat{display:inline-flex;align-items:center;gap:6px;margin:4px 0 0 18px;vertical-align:middle}'
+      + '.uxa-estat-lbl{font-size:12px;color:#8a95a1}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function editorStatusTick() {
+    if (!timeStatusOn()) { document.querySelectorAll('.uxa-estat').forEach(el => el.remove()); return; }
+    if (aid() !== 'user.timeEntry.edit') return;
+    const row = document.querySelector('grid-row.editing[data-key]');
+    if (!row) return;
+    const key = row.dataset.key;
+    if (!/^[0-9a-f-]{36}$/i.test(key || '')) return; // a saved time entry (TimeKey); new/unsaved rows have no assignment
+    const form = row.querySelector('form');
+    if (!form) return;
+    const existing = form.querySelector('.uxa-estat');
+    if (existing && existing.dataset.key === key) return;
+    const info = tstatCache.get(key);
+    if (info === undefined) { tstatResolve(key, pageDate()); return; } // fetch, render next tick
+    if (info === 'pending') return;
+    if (existing) existing.remove();
+    if (info === 'none' || !info.tuk) return; // only an assigned task has a workflow status to change
+    ensureTimeStatusStyle(); ensureEditorStatusStyle();
+    const noStatus = Number(info.statusKey) > 0 ? '' : '<option value="0" selected>No status</option>';
+    const opts = (info.options || []).map(o => `<option value="${o.k}"${o.k === info.statusKey ? ' selected' : ''}>${esc(o.l)}</option>`).join('');
+    const wrap = document.createElement('span');
+    wrap.className = 'uxa-estat'; wrap.dataset.key = key;
+    wrap.innerHTML = `<span class="uxa-estat-lbl">Status</span><span class="uxa-tstat uxa-tstat-edit"><span class="d" style="background:${info.color}"></span><select class="uxa-tstat-sel" data-key="${esc(key)}" data-tuk="${info.tuk}" title="Change this assignment's status">${noStatus}${opts}</select></span>`;
+    const sel = wrap.querySelector('select');
+    sel.addEventListener('change', () => tstatSetStatus(sel));
+    sel.addEventListener('mousedown', e => e.stopPropagation()); // open the native dropdown, not the grid's cell edit
+    sel.addEventListener('click', e => e.stopPropagation());
+    // Anchor beside the "I am done with this task" checkbox (its layout differs between the day and week editors).
+    const doneLbl = [...form.querySelectorAll('label')].find(l => /done with this task/i.test(l.textContent || ''));
+    const anchor = doneLbl ? (doneLbl.closest('div') || doneLbl) : null;
+    if (anchor && anchor.parentElement) anchor.insertAdjacentElement('afterend', wrap);
+    else form.appendChild(wrap);
+  }
+
   // ---------- Grouped grids: a visible Collapse all / Expand all toggle in the page header ----------
   // Workamajig buries Collapse All / Expand All in the "…" menu. We float a labeled toggle right beside that header "…"
   // menu button (My Time, the schedule List, the Projects list) — body-appended and positioned from the anchor's rect, so
@@ -4152,6 +4196,7 @@
     ntaTick();
     gridCurrencyTick();
     timeStatusTick();
+    editorStatusTick();
     expandAllTick();
     creativeFilterTick();
     noteBreaksTick();
