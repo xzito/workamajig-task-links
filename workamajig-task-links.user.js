@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.87.0';
+  const VERSION = '0.88.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -165,13 +165,41 @@
     },
 
     'user.timeEntry.edit': async (row) => {
-      if (!/^[0-9a-f-]{36}$/i.test(row.dataset.key)) return null;
-      const wd = pageDate();
-      let hit = (await getTime(wd)).get(row.dataset.key);
-      if (!hit && wd) hit = (await getTime(null)).get(row.dataset.key);
-      return hit || null;
+      const key = row.dataset.key || '';
+      // Day view: the row key is a TimeKey (GUID) -> full task context via loadTime.
+      if (/^[0-9a-f-]{36}$/i.test(key)) {
+        const wd = pageDate();
+        let hit = (await getTime(wd)).get(key);
+        if (!hit && wd) hit = (await getTime(null)).get(key);
+        if (hit) return hit;
+      }
+      // Week view: rows key on PK<TaskUserKey> and aren't in the day loadTime map.
+      // Resolve the project from the enclosing group header (data-group-key="PK<ProjectKey>"),
+      // then enrich with the task from the schedule when the row key is a known assignment.
+      const projectKey = timeGroupProjectKey(row);
+      if (!projectKey) return null;
+      const m = /^PK(\d+)$/.exec(key);
+      if (m) {
+        try {
+          const taskKey = (await getSchedule(projectKey)).byTuk.get(Number(m[1]));
+          if (taskKey) return { projectKey, taskUserKey: Number(m[1]), taskKey };
+        } catch (e) { /* schedule unavailable -> project links only */ }
+      }
+      return { projectKey };
     }
   };
+
+  // My Time group-header walk: the summaryHeader above a row carries data-group-key="PK<ProjectKey>";
+  // data rows have no data-group-key, so they're skipped.
+  function timeGroupProjectKey(row) {
+    let g = row.previousElementSibling;
+    while (g) {
+      const k = g.getAttribute('data-group-key') || '';
+      if (/^PK\d+$/.test(k)) return k.slice(2);
+      g = g.previousElementSibling;
+    }
+    return null;
+  }
 
   // ---------- UI (overlay only; never modifies the grid's own DOM) ----------
   let btn, menu, toastEl, hideTimer;
