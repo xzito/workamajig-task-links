@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.85.0';
+  const VERSION = '0.86.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -555,7 +555,9 @@
       // ...and reclaim the gap it left: WMJ's `datagrid.showindicator > grid-row.main` rule reserves 40px of row
       // padding-left for that indicator, which stays even with the element hidden. Zero it (id-scoped + !important beats
       // WMJ's class rule) so the rows sit flush to the table's left border instead of leaving a blank 40px column.
-      + each('grid-row.main') + '{padding-left:0 !important}';
+      // EXCEPT the expanded inline time-entry editor (grid-row...editing), which relies on that 40px to inset its form
+      // fields — leave those rows alone so the editor's Project/Task/etc. keep their left spacing.
+      + each('grid-row.main:not(.editing)') + '{padding-left:0 !important}';
     (document.head || document.documentElement).appendChild(s);
   }
   function timeGroupTick() {
