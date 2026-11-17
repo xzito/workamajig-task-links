@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.78.0';
+  const VERSION = '0.79.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -515,6 +515,33 @@
   }
   function frozenShadowTick() {
     if (document.querySelector('grid-cellgroup.locked')) ensureFrozenStyle();
+  }
+
+  // My Time timesheet: wash each project group-header row in a light blue, and italicize each group subtotal row with
+  // its label indented to line up with the time rows above it — so the parent and its total stand apart from the
+  // entries between them. Scoped to the timesheet grids (#grdWeek / #grdDay only), so no other grid is touched. Display
+  // only — no data changes. Gated via timeGroupsOn() (sync -> ON('time.grouprows')).
+  function timeGroupsOn() { return true; }
+  function ensureTimeGroupStyle() {
+    if (document.getElementById('uxa-timegroup-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-timegroup-style';
+    s.textContent =
+      // Group-header (parent) rows: the wash is set on the row AND its cells/cellgroups so it also covers the frozen
+      // "locked" Project column, which paints its own background over the row.
+      '#grdWeek grid-row.summaryHeader, #grdDay grid-row.summaryHeader,'
+      + '#grdWeek grid-row.summaryHeader grid-cellgroup, #grdDay grid-row.summaryHeader grid-cellgroup,'
+      + '#grdWeek grid-row.summaryHeader grid-cell, #grdDay grid-row.summaryHeader grid-cell'
+      + '{background-color:rgba(59,130,246,.12) !important}'
+      // Subtotal (summaryFooter) rows: italic across the row; indent just the label cell (grid-cell.dgTree) to 42px,
+      // matching the depth-1 time rows' project text above it (they sit at padding-left:42px).
+      + '#grdWeek grid-row.summaryFooter, #grdDay grid-row.summaryFooter{font-style:italic !important}'
+      + '#grdWeek grid-row.summaryFooter grid-cell.dgTree, #grdDay grid-row.summaryFooter grid-cell.dgTree{padding-left:42px !important}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function timeGroupTick() {
+    const on = timeGroupsOn(), existing = document.getElementById('uxa-timegroup-style');
+    if (on && !existing && (document.getElementById('grdWeek') || document.getElementById('grdDay'))) ensureTimeGroupStyle();
+    else if (!on && existing) existing.remove();
   }
 
   // ---------- New-task link toast: after Workamajig's native New Task form saves, offer the new task's link ----------
@@ -4086,6 +4113,7 @@
     expandAllTick();
     creativeFilterTick();
     noteBreaksTick();
+    timeGroupTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
