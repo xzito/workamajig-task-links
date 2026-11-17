@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.79.0';
+  const VERSION = '0.80.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -517,30 +517,32 @@
     if (document.querySelector('grid-cellgroup.locked')) ensureFrozenStyle();
   }
 
-  // My Time timesheet: wash each project group-header row in a light blue, and italicize each group subtotal row with
-  // its label indented to line up with the time rows above it — so the parent and its total stand apart from the
-  // entries between them. Scoped to the timesheet grids (#grdWeek / #grdDay only), so no other grid is touched. Display
-  // only — no data changes. Gated via timeGroupsOn() (sync -> ON('time.grouprows')).
+  // Grouped grids: wash each project group-header row in a light blue, and italicize each group subtotal row with its
+  // label indented to line up with the rows above it — so the parent and its total stand apart from the rows between
+  // them. Scoped to just the grids the user asked for (My Time week/day = #grdWeek/#grdDay, the Projects list =
+  // #grdProductionDash, the Today list = #grdMyTasks), so no other grid is touched. These grids share the same row
+  // markup (summaryHeader at 26px, depth-1 rows at 42px), so one rule set fits all. Display only — no data changes.
+  // Gated via timeGroupsOn() (sync -> ON('time.grouprows')).
+  const TG_GRIDS = ['grdWeek', 'grdDay', 'grdProductionDash', 'grdMyTasks'];
   function timeGroupsOn() { return true; }
   function ensureTimeGroupStyle() {
     if (document.getElementById('uxa-timegroup-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-timegroup-style';
+    const each = suffix => TG_GRIDS.map(g => '#' + g + ' ' + suffix).join(',');
     s.textContent =
-      // Group-header (parent) rows: the wash is set on the row AND its cells/cellgroups so it also covers the frozen
-      // "locked" Project column, which paints its own background over the row.
-      '#grdWeek grid-row.summaryHeader, #grdDay grid-row.summaryHeader,'
-      + '#grdWeek grid-row.summaryHeader grid-cellgroup, #grdDay grid-row.summaryHeader grid-cellgroup,'
-      + '#grdWeek grid-row.summaryHeader grid-cell, #grdDay grid-row.summaryHeader grid-cell'
-      + '{background-color:rgba(59,130,246,.12) !important}'
+      // Group-header (parent) rows: the wash is set on the row AND its cells/cellgroups so it also covers any frozen
+      // "locked" column, which paints its own background over the row.
+      each('grid-row.summaryHeader') + ',' + each('grid-row.summaryHeader grid-cellgroup') + ',' + each('grid-row.summaryHeader grid-cell')
+        + '{background-color:rgba(59,130,246,.12) !important}'
       // Subtotal (summaryFooter) rows: italic across the row; indent just the label cell (grid-cell.dgTree) to 42px,
-      // matching the depth-1 time rows' project text above it (they sit at padding-left:42px).
-      + '#grdWeek grid-row.summaryFooter, #grdDay grid-row.summaryFooter{font-style:italic !important}'
-      + '#grdWeek grid-row.summaryFooter grid-cell.dgTree, #grdDay grid-row.summaryFooter grid-cell.dgTree{padding-left:42px !important}';
+      // matching the depth-1 rows' first-column text above it. A grid with no subtotal rows just gets the header wash.
+      + each('grid-row.summaryFooter') + '{font-style:italic !important}'
+      + each('grid-row.summaryFooter grid-cell.dgTree') + '{padding-left:42px !important}';
     (document.head || document.documentElement).appendChild(s);
   }
   function timeGroupTick() {
     const on = timeGroupsOn(), existing = document.getElementById('uxa-timegroup-style');
-    if (on && !existing && (document.getElementById('grdWeek') || document.getElementById('grdDay'))) ensureTimeGroupStyle();
+    if (on && !existing && TG_GRIDS.some(id => document.getElementById(id))) ensureTimeGroupStyle();
     else if (!on && existing) existing.remove();
   }
 
@@ -3951,18 +3953,22 @@
   function ensureExpandAllStyle() {
     if (document.getElementById('uxa-xall-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-xall-style';
-    s.textContent = '#uxa-xall{position:fixed;z-index:40;font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#2b6cb0;background:#eef3fb;border:1px solid #cfe0f5;border-radius:999px;padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}'
+    // Height (30px) and corner radius (10px) match Workamajig's own small header buttons (the "+" / "…" beside it), so it
+    // reads as one of them rather than a floating pill; the blue fill keeps it recognizable as ours.
+    s.textContent = '#uxa-xall{position:fixed;z-index:40;box-sizing:border-box;height:30px;font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#2b6cb0;background:#eef3fb;border:1px solid #cfe0f5;border-radius:10px;padding:0 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}'
       + '#uxa-xall:hover{background:#e2ecfa;border-color:#b9d3f2}'
       + '#uxa-xall:disabled{opacity:.6;cursor:default}';
     (document.head || document.documentElement).appendChild(s);
   }
   // The grouped grids that make sense (and where the header "…" menu lives): My Time, the schedule List, the Projects
   // list. Excludes dashboards and other views (e.g. the project dashboard, where there's nothing to collapse).
-  const XALL_AIDS = ['user.timeEntry.edit', 'projects.schedule.edit2', 'projects.production.dash'];
+  const XALL_AIDS = ['user.timeEntry.edit', 'projects.schedule.edit2', 'projects.production.dash', 'today.creative'];
   function expandAllTick() {
     const old = document.getElementById('uxa-xall');
     if (!expandAllOn() || XALL_AIDS.indexOf(aid()) < 0 || (typeof board !== 'undefined' && board && board.on)) { if (old) old.remove(); return; }
-    const sh = document.querySelector('grid-row.summaryHeader');
+    // Require a VISIBLE group header. On Today the list grid stays in the DOM (hidden) behind the card/board layouts, so
+    // a plain querySelector would wrongly show the toggle there; only the list layout actually has visible headers.
+    const sh = [...document.querySelectorAll('grid-row.summaryHeader')].find(x => x.getBoundingClientRect().width > 0);
     if (!sh) { if (old) old.remove(); return; }
     // Anchor to the active page's header "…" menu button (scoped to the page so overlays pick their own header).
     const page = sh.closest('page') || document;
@@ -4036,8 +4042,11 @@
   }
   function creativeFilterTick() {
     const existing = document.getElementById('uxa-projfilter');
-    // Only the card/board layouts (they render .ac-card); the list layout is a virtualized grid we don't hide-filter.
-    if (!creativeFilterOn() || aid().indexOf('today.') !== 0 || !document.querySelector('.ac-card')) { if (existing) existing.remove(); return; }
+    // Only the card/board layouts (where cards are actually visible). The list layout keeps the .ac-card nodes in the DOM
+    // but hidden and shows a grid instead, so a plain .ac-card check would leave the filter lingering on the list view —
+    // require at least one VISIBLE card. (The list view has Expand/Collapse all instead.)
+    const cardLayout = [...document.querySelectorAll('.ac-card')].some(c => c.offsetParent !== null);
+    if (!creativeFilterOn() || aid().indexOf('today.') !== 0 || !cardLayout) { if (existing) existing.remove(); return; }
     const search = document.querySelector('.frmTaskSearch');
     const projects = creativeProjects();
     if (!search || projects.length < 2) { if (existing) existing.remove(); return; } // nothing to filter with 0–1 projects
