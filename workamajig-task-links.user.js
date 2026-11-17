@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.83.0';
+  const VERSION = '0.84.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -546,8 +546,12 @@
       // on every content row stacks into continuous side edges and a BOTTOM border on each (incl. the last row) closes
       // the foot; a TOP border on the header row closes the head. (Cell targeting was unreliable — the cell-bearing
       // group and the "last" cell vary by layout, which left the right/bottom edges missing.)
-      + edges + '{border-left:1px solid #cccccc;border-right:1px solid #cccccc;border-bottom:1px solid #cccccc}'
-      + each('grid-row.column-header-2') + '{border-top:1px solid #cccccc}';
+      + edges + '{border-left:1px solid #cccccc !important;border-right:1px solid #cccccc !important;border-bottom:1px solid #cccccc !important}'
+      + each('grid-row.column-header-2') + '{border-top:1px solid #cccccc !important}'
+      // Hide the empty row-action gutter (grid-row-header: edit/delete/select indicators) on these read-mostly views —
+      // it's the narrow blank first column the frame was boxing. The group chevron is in grid-cell.dgTree, not here, so
+      // collapse still works. Scoped to the target grids only (the schedule keeps its gutter, where those actions matter).
+      + each('grid-row-header') + '{display:none !important}';
     (document.head || document.documentElement).appendChild(s);
   }
   function timeGroupTick() {
