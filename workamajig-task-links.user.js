@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.82.0';
+  const VERSION = '0.83.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -765,6 +765,9 @@
     if (document.getElementById('uxa-ndesc-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-ndesc-style';
     s.textContent = RTE_CSS +
+      // WMJ keeps the description's read (text-holder) and edit (textarea) views in <div.text-sizer> panes inside one
+      // .input-control and flips between them; we hide both panes on the control we take over, so only our editor shows.
+      '.uxa-deschost > .text-sizer{display:none !important}' +
       '.uxa-ndesc{margin-top:4px}.uxa-ndesc .rtein{min-height:90px}' +
       '.uxa-ndesc-row{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}' +
       '.uxa-ndesc-save{background:#7ab51d;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font:inherit;font-size:12px}' +
@@ -775,16 +778,24 @@
   }
   function nativeDescTick() {
     if (aid() !== 'projects.schedule.edit2') return;
-    const ta = [...document.querySelectorAll('div.taskDetailsSide textarea[name="Description"]')].find(t => t.offsetParent);
+    // The ACTIVE slideout (a visible taskDetailsSide — there's also a hidden template copy). Work off the slideout, not
+    // off a *visible* textarea: WMJ opens a task that already has a description in READ mode, where the edit textarea is
+    // hidden, so keying on textarea visibility made our editor appear only intermittently (edit-mode tasks) and miss the
+    // read-mode ones.
+    const side = [...document.querySelectorAll('div.taskDetailsSide')].find(s => s.offsetParent);
+    if (!side) return;
+    const ta = side.querySelector('textarea[name="Description"]');
     if (!ta) return;
+    const control = ta.closest('.input-control');
+    if (!control) return;
     const sel = document.querySelector('#grdProjectSchedule grid-row.datarow[class*="select"][data-key], grid-row.datarow.selected[data-key]');
     const taskKey = sel ? Number(sel.getAttribute('data-key')) : 0;
     const pk = qs().get('k');
     if (!taskKey || !pk) return; // can't tie it to a task yet — retry next tick
     const cur = ta.value || '';
-    let host = ta.nextElementSibling && ta.nextElementSibling.classList && ta.nextElementSibling.classList.contains('uxa-ndesc') ? ta.nextElementSibling : null;
+    let host = control.querySelector(':scope > .uxa-ndesc');
     if (host) {
-      // Already enhanced: if a row switch reused this textarea (task/text changed), re-seed — but not while editing.
+      // Already enhanced: if a row switch reused this control (task/text changed), re-seed — but not while editing.
       if ((host.dataset.uxaTask !== String(taskKey) || host.dataset.uxaOrig !== cur) && document.activeElement !== host.querySelector('.rtein')) {
         host.dataset.uxaTask = String(taskKey); host.dataset.uxaOrig = cur;
         const edEl = host.querySelector('.rtein'); if (edEl) edEl.innerHTML = descToHtml(cur);
@@ -793,13 +804,15 @@
       return;
     }
     ensureNdescStyle();
-    ta.style.display = 'none';
+    // Hide WMJ's read + edit panes (uxa-deschost) and append our editor as a direct child of the control, so it shows
+    // whenever the task is selected — read or edit state alike — instead of living inside the pane WMJ hides in read mode.
+    control.classList.add('uxa-deschost');
     host = document.createElement('div');
     host.className = 'uxa-ndesc';
     host.dataset.uxaTask = String(taskKey); host.dataset.uxaOrig = cur;
     host.innerHTML = rteEditor(descToHtml(cur)) +
       '<div class="uxa-ndesc-row"><button type="button" class="uxa-ndesc-save">Save description</button><button type="button" class="uxa-ndesc-cancel">Revert</button><span class="uxa-ndesc-msg"></span></div>';
-    ta.insertAdjacentElement('afterend', host);
+    control.appendChild(host);
     wireRte(host.querySelector('.rte'));
     const msg = m => { const el = host.querySelector('.uxa-ndesc-msg'); if (el) el.textContent = m || ''; };
     host.querySelector('.uxa-ndesc-cancel').addEventListener('click', e => { e.preventDefault(); const edEl = host.querySelector('.rtein'); if (edEl) edEl.innerHTML = descToHtml(host.dataset.uxaOrig || ''); msg(''); });
