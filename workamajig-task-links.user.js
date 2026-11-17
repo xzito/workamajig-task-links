@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.90.0';
+  const VERSION = '0.91.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4081,12 +4081,28 @@
     // a plain querySelector would wrongly show the toggle there; only the list layout actually has visible headers.
     const sh = [...document.querySelectorAll('grid-row.summaryHeader')].find(x => x.getBoundingClientRect().width > 0);
     if (!sh) { if (old) old.remove(); return; }
-    // Anchor to the active page's header "…" menu button (scoped to the page so overlays pick their own header).
+    // Where to float the toggle. Most grouped-list pages have a header "…" menu button to sit beside; the project
+    // Schedule does NOT (its only "…" is up in the title chrome, which threw the button to the top of the page). On the
+    // schedule, anchor into its own toolbar instead — the empty gap after "Project Dates", before the right-aligned
+    // controls. `pos` = { top, rowH, left }: top/rowH give the row to vertically centre on, left is the x to start at.
     const page = sh.closest('page') || document;
-    const anchor = [...page.querySelectorAll('button[data-action="menu"]')]
-      .map(b => ({ b, r: b.getBoundingClientRect() })).filter(x => x.r.width > 0)
-      .sort((a, b) => a.r.y - b.r.y).map(x => x.b)[0];
-    if (!anchor) { if (old) old.remove(); return; }
+    let pos = null;
+    if (aid() === 'projects.schedule.edit2') {
+      const search = [...page.querySelectorAll('input')].find(i => /search/i.test(i.placeholder || '') && i.getBoundingClientRect().width);
+      let bar = search ? search.parentElement : null;
+      for (let i = 0; i < 6 && bar && !/hide completed/i.test(bar.textContent || ''); i++) bar = bar.parentElement;
+      if (bar && /hide completed/i.test(bar.textContent || '')) {
+        const ref = [...bar.querySelectorAll('h5')].find(h => /project dates/i.test(h.textContent || '')) || bar.querySelector('spacer') || search;
+        const barR = bar.getBoundingClientRect(), refR = ref && ref.getBoundingClientRect();
+        if (barR.width && refR && refR.width) pos = { top: barR.top, rowH: barR.height, left: refR.right + 12 };
+      }
+    } else {
+      const anchor = [...page.querySelectorAll('button[data-action="menu"]')]
+        .map(b => ({ b, r: b.getBoundingClientRect() })).filter(x => x.r.width > 0)
+        .sort((a, b) => a.r.y - b.r.y).map(x => x.b)[0];
+      if (anchor) { const r = anchor.getBoundingClientRect(); pos = { top: r.top, rowH: r.height, left: r.right + 10 }; }
+    }
+    if (!pos) { if (old) old.remove(); return; }
     ensureExpandAllStyle();
     let b = old;
     if (!b) {
@@ -4103,12 +4119,10 @@
     const collapse = !!document.querySelector('grid-row.summaryHeader.expanded');
     const label = collapse ? 'Collapse all' : 'Expand all';
     if (b.dataset.label !== label) { b.innerHTML = XALL_ICON(collapse) + '<span>' + label + '</span>'; b.dataset.label = label; }
-    // Float just to the right of the header "…" menu, vertically centered on it.
-    const r = anchor.getBoundingClientRect();
-    if (!r.width) { b.style.display = 'none'; return; }
+    // Float at the computed anchor, vertically centered on its row.
     b.style.display = '';
-    b.style.top = (r.top + (r.height - (b.offsetHeight || 30)) / 2) + 'px';
-    b.style.left = (r.right + 10) + 'px';
+    b.style.top = (pos.top + (pos.rowH - (b.offsetHeight || 30)) / 2) + 'px';
+    b.style.left = pos.left + 'px';
   }
 
   // ---------- "Today" assignee views: filter the assignment cards down to one project ----------
