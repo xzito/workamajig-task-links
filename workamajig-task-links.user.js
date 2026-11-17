@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.88.0';
+  const VERSION = '0.89.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -267,8 +267,6 @@
     header.textContent = rowName(row);
     menu.appendChild(header);
     const body = document.createElement('div'); menu.appendChild(body);
-    const foot = document.createElement('div'); foot.style.cssText = 'padding:4px 12px 2px;font-size:10px;color:#aaa;text-align:right'; foot.textContent = 'Task Links v' + VERSION;
-    setTimeout(() => menu && menu.appendChild(foot), 0);
     const item = (label, sub, onClick) => {
       const d = document.createElement('div');
       d.style.cssText = 'padding:6px 12px;cursor:' + (onClick ? 'pointer' : 'default') + ';white-space:nowrap';
