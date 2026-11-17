@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.80.0';
+  const VERSION = '0.81.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -537,7 +537,15 @@
       // Subtotal (summaryFooter) rows: italic across the row; indent just the label cell (grid-cell.dgTree) to 42px,
       // matching the depth-1 rows' first-column text above it. A grid with no subtotal rows just gets the header wash.
       + each('grid-row.summaryFooter') + '{font-style:italic !important}'
-      + each('grid-row.summaryFooter grid-cell.dgTree') + '{padding-left:42px !important}';
+      + each('grid-row.summaryFooter grid-cell.dgTree') + '{padding-left:42px !important}'
+      // Full frame around the table, in WMJ's own line colour (#cccccc). WMJ already draws a per-row bottom border, which
+      // closes the BOTTOM; we add the three missing edges: LEFT on the first column (data-idx 0, stable across layouts),
+      // RIGHT on the last cell of each cell group (whichever group holds the cells — it varies by grid), and TOP on the
+      // column-header row. These are real cells (not the zero-box containers), so the borders render continuously down /
+      // across the table the same way the header wash does.
+      + each('grid-cell[data-idx="0"]') + '{border-left:1px solid #cccccc}'
+      + each('grid-cellgroup grid-cell:last-of-type') + '{border-right:1px solid #cccccc}'
+      + each('grid-row.column-header-2 grid-cell') + '{border-top:1px solid #cccccc}';
     (document.head || document.documentElement).appendChild(s);
   }
   function timeGroupTick() {
