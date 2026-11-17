@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.89.0';
+  const VERSION = '0.90.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -567,13 +567,21 @@
       // matching the depth-1 rows' first-column text above it. A grid with no subtotal rows just gets the header wash.
       + each('grid-row.summaryFooter') + '{font-style:italic !important}'
       + each('grid-row.summaryFooter grid-cell.dgTree') + '{padding-left:42px !important}'
-      // Full frame around the table, in WMJ's own line colour (#cccccc). Framed with the ROWS, not cells: WMJ's own
-      // full-width per-row bottom line proves each content-row box spans the whole table width, so a LEFT + RIGHT border
-      // on every content row stacks into continuous side edges and a BOTTOM border on each (incl. the last row) closes
-      // the foot; a TOP border on the header row closes the head. (Cell targeting was unreliable — the cell-bearing
-      // group and the "last" cell vary by layout, which left the right/bottom edges missing.)
-      + edges + '{border-left:1px solid #cccccc !important;border-right:1px solid #cccccc !important;border-bottom:1px solid #cccccc !important}'
+      // Side frame around the table, in WMJ's own line colour (#cccccc). Framed with the ROWS, not cells: WMJ's own
+      // full-width per-row line proves each content-row box spans the whole table width, so a LEFT + RIGHT border on
+      // every content row stacks into continuous side edges; a TOP border on the header row closes the head. (Cell
+      // targeting was unreliable — the cell-bearing group and the "last" cell vary by layout.) The foot is handled on
+      // the scroll container below, not per-row: WMJ already draws a #ccc separator under every row, so the "last" row's
+      // line floats wherever the virtualised window ends, not at the real table bottom.
+      + edges + '{border-left:1px solid #cccccc !important;border-right:1px solid #cccccc !important}'
       + each('grid-row.column-header-2') + '{border-top:1px solid #cccccc !important}'
+      // Depth cues, like the frozen-column shadow. Top: float the sticky column header above the body with a soft
+      // downward shadow so rows read as scrolling under it. Foot: close the table on the SCROLL CONTAINER (grid-section),
+      // whose fixed bottom edge is the real table bottom (not the last virtualised row) — a border plus a soft upward
+      // inset shadow so the body tucks under it. The grand-total grid-footer sits below grid-section and stays outside
+      // the frame (that was the row "below" the table that the old per-row bottom border kept landing on).
+      + each('grid-header') + '{position:relative;z-index:4;box-shadow:0 5px 7px -3px rgba(0,0,0,.13) !important}'
+      + each('grid-section') + '{border-bottom:1px solid #cccccc !important;box-shadow:inset 0 -8px 7px -7px rgba(0,0,0,.13) !important}'
       // Hide the empty row-action gutter (grid-row-header: edit/delete/select indicators) on these read-mostly views —
       // it's the narrow blank first column the frame was boxing. The group chevron is in grid-cell.dgTree, not here, so
       // collapse still works. Scoped to the target grids only (the schedule keeps its gutter, where those actions matter).
