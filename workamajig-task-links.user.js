@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.91.0';
+  const VERSION = '0.92.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -797,6 +797,92 @@
     const st = existing || document.createElement('style');
     if (!existing) { st.id = 'uxa-cur-style'; (document.head || document.documentElement).appendChild(st); }
     st.textContent = rules.join('');
+  }
+
+  // ---------- Projects grid: a "budget consumed" bar on each project row ----------
+  // Gated via budgetBarOn() (sync -> ON('grid.budgetbar')). On the Projects list (grdProductionDash), each row gets a
+  // small gauge showing how much of the project's CURRENT budget (dollars) has been consumed to date, borrowing the
+  // look of Workamajig's native "% Complete" bar. All figures come from the row's own record (stable native fields):
+  //   budget   = CurrentBudgetLaborGross + CurrentBudgetExpenseGross   (the "Budget Labor + Expenses" column)
+  //   consumed = TotalLaborGross + TotalCostsGross                     (the "Current Labor + Expenses" column)
+  // We place the bar inside whichever cell actually shows the consumed figure, found by matching cell text to the
+  // record (rename-proof, layout-proof) and cached per column set — so it rides along in any layout that surfaces that
+  // $ column (e.g. the Accounting layout), and simply doesn't appear in layouts that don't (e.g. a pure PM layout).
+  function budgetBarOn() { return true; }
+  const BB_GID = 'grdProductionDash';
+  function bbColor(pct) { return pct > 1 ? '#e53e3e' : (pct >= 0.85 ? '#dd8800' : '#38a169'); }
+  function bbMoney(n) { return '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function ensureBudgetBarStyle() {
+    if (document.getElementById('uxa-bbar-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-bbar-style';
+    // The gauge floats at the bottom of the consumed-$ cell so it never disturbs the number's own position. The track is
+    // a neutral rail; fill + label share one health colour (green under budget, amber near it, red over). The label sits
+    // beside the bar (not on it) so it reads at any fill, 2% or 112% alike. pointer-events stay off the bar so cell
+    // clicks pass through; only the label accepts hover, to surface the exact dollars in its tooltip.
+    s.textContent = '.uxa-bbar{position:absolute;left:0;right:0;bottom:5px;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:none;z-index:2}'
+      + '.uxa-bbar .uxa-bbar-track{position:relative;width:62px;height:7px;border-radius:4px;background:#e3e6ea;overflow:hidden;flex:0 0 auto}'
+      + '.uxa-bbar .uxa-bbar-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px}'
+      + '.uxa-bbar .uxa-bbar-lbl{font:700 10px/1 -apple-system,Segoe UI,Roboto,sans-serif;letter-spacing:.2px;pointer-events:auto;cursor:default}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  let bbSig = '', bbIdx = -1;
+  // Find the column index whose cells display the consumed figure, by matching cell text to each record across rows.
+  // Tries the combined labor+costs sum first (the Accounting "Current Labor + Expenses" column), then labor alone.
+  function bbConsumedIdx(gridEl, recByKey) {
+    const rows = [...gridEl.querySelectorAll('grid-row.datarow[data-key]')].filter(r => recByKey.has(r.getAttribute('data-key')));
+    if (rows.length < 2) return -1;
+    const sample = rows.find(r => r.querySelector('grid-cell[data-idx]:not(.header)'));
+    if (!sample) return -1;
+    const idxs = [...sample.querySelectorAll('grid-cell[data-idx]:not(.header)')].map(c => c.getAttribute('data-idx'));
+    const valueFns = [
+      rec => (+rec.TotalLaborGross || 0) + (+rec.TotalCostsGross || 0),
+      rec => (+rec.TotalLaborGross || 0)
+    ];
+    for (const valueOf of valueFns) {
+      for (const idx of idxs) {
+        let ok = 0, seen = 0, first = null, distinct = false, bad = false;
+        for (const r of rows) {
+          const rec = recByKey.get(r.getAttribute('data-key'));
+          const c = r.querySelector('grid-cell[data-idx="' + idx + '"]:not(.header)'); if (!c) continue;
+          const raw = (c.textContent || '').trim(); if (raw === '') continue;
+          const num = parseFloat(raw.replace(/[$,\s]/g, '')); if (isNaN(num)) { bad = true; break; }
+          seen++; if (Math.abs(num - valueOf(rec)) < 0.02) ok++; else { bad = true; break; }
+          if (first === null) first = num; else if (num !== first) distinct = true;
+        }
+        if (!bad && seen >= 2 && ok === seen && distinct) return idx;
+      }
+    }
+    return -1;
+  }
+  function budgetBarTick() {
+    const grid = budgetBarOn() ? curGrids().find(g => g.gid === BB_GID) : null;
+    if (!grid) { document.querySelectorAll('.uxa-bbar').forEach(b => b.remove()); bbSig = ''; bbIdx = -1; return; }
+    const recByKey = new Map();
+    for (const v of (grid.ctl.vdom || [])) if (v && v.data && typeof v.data === 'object') recByKey.set(String(v.key), v.data);
+    if (!recByKey.size) return;
+    // Recompute the consumed column only when the column set changes (same signature idea as the "$" feature).
+    const sig = [...grid.el.querySelectorAll('grid-cell.header[data-idx]')].map(h => h.getAttribute('data-idx') + (h.textContent || '').trim()).join(',');
+    if (sig !== bbSig) { bbIdx = bbConsumedIdx(grid.el, recByKey); bbSig = sig; }
+    if (bbIdx < 0) { grid.el.querySelectorAll('.uxa-bbar').forEach(b => b.remove()); return; }
+    ensureBudgetBarStyle();
+    for (const row of grid.el.querySelectorAll('grid-row.datarow[data-key]')) {
+      const rec = recByKey.get(row.getAttribute('data-key'));
+      const cell = row.querySelector('grid-cell[data-idx="' + bbIdx + '"]:not(.header)');
+      if (!rec || !cell) continue;
+      const budget = (+rec.CurrentBudgetLaborGross || 0) + (+rec.CurrentBudgetExpenseGross || 0);
+      const consumed = (+rec.TotalLaborGross || 0) + (+rec.TotalCostsGross || 0);
+      const old = cell.querySelector(':scope > .uxa-bbar');
+      if (budget <= 0) { if (old) old.remove(); continue; }           // no budget set -> no meaningful %
+      const pct = consumed / budget, disp = Math.round(pct * 100), col = bbColor(pct);
+      if (old && old.dataset.pct === String(disp)) continue;          // unchanged -> leave it
+      if (old) old.remove();
+      if (getComputedStyle(cell).position === 'static') cell.style.position = 'relative';
+      const bar = document.createElement('span');
+      bar.className = 'uxa-bbar'; bar.dataset.pct = String(disp);
+      bar.innerHTML = '<span class="uxa-bbar-track"><span class="uxa-bbar-fill" style="width:' + Math.max(0, Math.min(100, pct * 100)) + '%;background:' + col + '"></span></span>'
+        + '<span class="uxa-bbar-lbl" style="color:' + col + '" title="Budget consumed: ' + disp + '% — ' + bbMoney(consumed) + ' of ' + bbMoney(budget) + '">' + disp + '%</span>';
+      cell.appendChild(bar);
+    }
   }
 
   // ---------- Schedule row-detail slideout: rich text for the native Task Description ----------
@@ -4243,6 +4329,7 @@
     nativeDescTick();
     ntaTick();
     gridCurrencyTick();
+    budgetBarTick();
     timeStatusTick();
     editorStatusTick();
     expandAllTick();
