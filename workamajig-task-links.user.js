@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.94.0';
+  const VERSION = '0.95.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -1469,6 +1469,45 @@
     if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
     scheduleCache.delete(String(projectKey));
     return hours;
+  }
+
+  // The "% Complete" each status is worth, mirroring Workamajig's own "Default Percent Complete" (Scheduling → ⋯ → Edit
+  // Assignment Statuses). Natively, setting a status sets the assignment's % to this; the board's updateAssignmentStatus
+  // call doesn't, so Project Health and the Projects dashboard drifted. Keyed by status NAME (case-insensitive) so it
+  // survives status-key changes; a status not listed here leaves % to Workamajig (we don't guess).
+  const STATUS_PCT = { 'backlog': 0, 'ready': 0, 'in progress': 10, 'ready for review/blocked': 80, 'completed': 100 };
+  function statusDefaultPct(name) {
+    const k = (name || '').trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(STATUS_PCT, k) ? STATUS_PCT[k] : null;
+  }
+  // Persist an assignment's % Complete the same proven way saveAssignmentHours persists planned hours: the fresh taskUser
+  // row from getSchedule, PercComp changed, rowstate 'US', in the schedule save envelope. Called after the status itself
+  // is saved, so the row already carries the new status and this touches only the percent.
+  async function saveAssignmentPercComp(projectKey, taskUserKey, pct) {
+    projectKey = Number(projectKey); taskUserKey = Number(taskUserKey); pct = Number(pct);
+    if (!isFinite(pct) || pct < 0 || pct > 100) throw new Error('percent must be 0–100');
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await call('Modules.Projects.Schedule', 'getSchedule', {
+      projectKey, searchKeys: null, includeTransactions: false, loadBucketDetail: false,
+      application: SCHED_APP, performRecalc: false, fromNotification: false, origData: null
+    });
+    const tu = (sched.projectTaskUserData || []).find(x => x.TaskUserKey === taskUserKey);
+    if (!tu) throw new Error('this assignment no longer exists; reload');
+    if (+tu.PercComp === pct) return pct;  // already there (e.g. Workamajig did apply it) — nothing to write
+    tu.PercComp = pct; tu.rowstate = 'US';
+    const res = await call('Modules.Projects.Schedule', 'updateScheduleDM', {
+      project, projectKey, tasksDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      taskUsersDM: { insertedItems: [], updatedItems: [tu], deletedItems: [] },
+      predsDM: { insertedItems: [], updatedItems: [], deletedItems: [] },
+      removeProjectUsers: [], addedAssignments: [], tasksFromTemplate: 0,
+      scheduleSessionID: sched.scheduleSessionID, newMods: null, poUpdateList: []
+    }, true);
+    if (res.errors && res.errors.length) throw new Error(res.errors.map(e => e.message).join('; '));
+    scheduleCache.delete(String(projectKey));
+    return pct;
   }
 
   // Set a task's due date the same way saveTaskDescription writes a description: a fresh task row from getSchedule with
@@ -3741,7 +3780,13 @@
     try {
       const res = await call('WJAPP.Modules.Project.Traffic', 'updateAssignmentStatus', { TaskUserKey: tuk, TaskUserStatusKey: statusKey }, true);
       if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
-      const pc = await serverPercComp(tuk); if (pc != null) tu.PercComp = pc;
+      // Mirror Workamajig's native "Default Percent Complete" for the new status (the board's status call alone doesn't set
+      // it). Write it ourselves where the status is one we know a default for; otherwise read back whatever the server has.
+      const defPct = statusDefaultPct(st.l);
+      let pc = null;
+      if (defPct != null) { try { pc = await saveAssignmentPercComp(board.projectKey, tuk, defPct); } catch (e) { pc = await serverPercComp(tuk); } }
+      else pc = await serverPercComp(tuk);
+      if (pc != null) tu.PercComp = pc;
       board.dirty = true;
       renderBoard();
       toast(`Moved to ${st.l}`);
