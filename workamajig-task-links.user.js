@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.95.0';
+  const VERSION = '0.96.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4277,7 +4277,9 @@
   // pick, in the card AND board layouts (both render .ac-card, which hides cleanly). The list layout is a virtualized grid
   // where hiding rows leaves gaps, so it's skipped. Matching is by project number (stable across layouts). Gated via
   // creativeFilterOn() (sync rewrites it to ON('today.projectfilter')).
-  let creativeProj = ''; // selected project NUMBER (e.g. "26-C-LAFE-0151"), '' = all
+  let creativeProj = '';        // selected project NUMBER (e.g. "26-C-LAFE-0151"), '' = all
+  let creativeSearch = '';      // free-text query (project / client / task), lowercased, '' = none
+  let creativeDueWeek = false;  // "Due this week" toggle
   function creativeFilterOn() { return true; }
   const projKeyOf = s => { const m = /^(\d{2}-(?:[A-Z]-)?[A-Z0-9]+-\d{3,4})/.exec((s || '').trim()); return m ? m[1] : (s || '').trim(); };
   const isProjText = s => /^\d{2}-[A-Z0-9]/.test((s || '').trim());
@@ -4288,27 +4290,83 @@
     return [...map.entries()].map(([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name));
   }
   const creativeCardHost = card => card.closest('li, taskcard') || card;
+  // Monday-00:00 .. Sunday-23:59 of the week containing today.
+  function creativeWeekBounds() {
+    const n = new Date(), d = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    const dow = (d.getDay() + 6) % 7; // 0 = Monday
+    const mon = new Date(d); mon.setDate(d.getDate() - dow);
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23, 59, 59, 999);
+    return [mon, sun];
+  }
+  const CREATIVE_MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+  // A card's due DATE, read from its own display: the absolute ".ac-due" ("Due: Thursday, December 31" — year inferred so
+  // the weekday matches) or a relative label ("Due today", "Due tomorrow", "Overdue 27d", "Due in 3d"). null if none/unparsable.
+  function creativeCardDue(card) {
+    const today = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+    const add = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    const abs = card.querySelector('.ac-due');
+    if (abs) {
+      const m = /([A-Za-z]+day)\s*,\s*([A-Za-z]+)\s+(\d{1,2})/.exec(abs.textContent || '');
+      if (m) {
+        const wd = m[1].toLowerCase(), mon = CREATIVE_MONTHS.indexOf(m[2].toLowerCase()), day = +m[3];
+        if (mon >= 0) {
+          const y0 = new Date().getFullYear();
+          for (const y of [y0, y0 + 1, y0 - 1]) {
+            const d = new Date(y, mon, day);
+            if (d.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase() === wd) return d;
+          }
+          // weekday didn't resolve a year (bad data); fall back to the year that lands nearest today
+          let best = null, bestGap = Infinity;
+          for (const y of [y0 - 1, y0, y0 + 1]) { const d = new Date(y, mon, day), g = Math.abs(d - today()); if (g < bestGap) { bestGap = g; best = d; } }
+          return best;
+        }
+      }
+    }
+    const t = (card.textContent || '').toLowerCase();
+    let mm;
+    if (/\bdue today\b/.test(t)) return today();
+    if (/\bdue tomorrow\b/.test(t)) return add(today(), 1);
+    if (/\bdue yesterday\b/.test(t)) return add(today(), -1);
+    if ((mm = /overdue\s+(\d+)\s*d\b/.exec(t))) return add(today(), -(+mm[1]));
+    if ((mm = /due\s+in\s+(\d+)\s*d\b/.exec(t))) return add(today(), +mm[1]);
+    if ((mm = /\bdue\s+(\d+)\s*d\b/.exec(t))) return add(today(), +mm[1]);
+    return null;
+  }
+  // A card passes when it clears every active filter: project, text query, and "due this week".
+  function creativeCardMatch(card) {
+    if (creativeProj) { const a = card.querySelector('.ac-title'); if (projKeyOf(a ? a.textContent : '') !== creativeProj) return false; }
+    if (creativeSearch && (card.textContent || '').toLowerCase().indexOf(creativeSearch) < 0) return false; // project + client + task text
+    if (creativeDueWeek) { const d = creativeCardDue(card); if (!d) return false; const [a, b] = creativeWeekBounds(); if (d < a || d > b) return false; }
+    return true;
+  }
   function creativeApply() {
-    const sel = creativeProj;
+    const filtering = !!(creativeProj || creativeSearch || creativeDueWeek);
     document.querySelectorAll('.ac-card').forEach(card => {
-      const a = card.querySelector('.ac-title');
-      const match = !sel || projKeyOf(a ? a.textContent : '') === sel;
-      creativeCardHost(card).style.display = match ? '' : 'none';
+      creativeCardHost(card).style.display = creativeCardMatch(card) ? '' : 'none';
     });
     // card layout: hide a project group header (an h2-headed li) when none of its cards are visible
     document.querySelectorAll('h2').forEach(h => {
       if (!isProjText(h.textContent)) return;
       const gli = h.closest('li'); if (!gli) return;
       const anyVisible = [...gli.querySelectorAll('.ac-card')].some(c => creativeCardHost(c).style.display !== 'none');
-      gli.style.display = (!sel || anyVisible) ? '' : 'none';
+      gli.style.display = (!filtering || anyVisible) ? '' : 'none';
     });
   }
   function ensureCreativeFilterStyle() {
     if (document.getElementById('uxa-pf-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-pf-style';
-    s.textContent = '.uxa-projfilter{display:inline-flex;align-items:center;gap:6px;margin:8px 0 0;font:12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#667;vertical-align:middle}'
+    s.textContent = '.uxa-projfilter{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;margin:8px 0 0;font:12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#667;vertical-align:middle}'
       + ".uxa-projfilter select{font:inherit;font-size:13px;color:#222;padding:6px 26px 6px 10px;border:1px solid #d0d0d0;border-radius:8px;background:#fff;max-width:240px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23667788' stroke-width='1.5'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 9px center;background-size:9px 6px}"
-      + '.uxa-projfilter select:focus{outline:none;border-color:#7ab51d;box-shadow:0 0 0 3px rgba(122,181,29,.15)}';
+      + '.uxa-projfilter select:focus,.uxa-pf-search:focus{outline:none;border-color:#7ab51d;box-shadow:0 0 0 3px rgba(122,181,29,.15)}'
+      + '.uxa-pf-search{font:inherit;font-size:13px;color:#222;padding:6px 10px;border:1px solid #d0d0d0;border-radius:8px;background:#fff;width:200px}'
+      + '.uxa-pf-search::placeholder{color:#9aa}'
+      // "Due this week" is a toggle pill so its on/off state is obvious; the real checkbox is hidden but drives :checked.
+      + '.uxa-pf-due{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font:inherit;font-size:13px;color:#445;padding:6px 11px;border:1px solid #d0d0d0;border-radius:8px;background:#fff}'
+      + '.uxa-pf-due input{position:absolute;opacity:0;width:0;height:0}'
+      + '.uxa-pf-due .uxa-pf-box{width:14px;height:14px;border:1.5px solid #b7bcc6;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:10px;line-height:1}'
+      + '.uxa-pf-due:has(input:checked){background:#eef6e6;border-color:#7ab51d;color:#3f6d12}'
+      + '.uxa-pf-due:has(input:checked) .uxa-pf-box{background:#7ab51d;border-color:#7ab51d}'
+      + '.uxa-pf-due:has(input:focus-visible){box-shadow:0 0 0 3px rgba(122,181,29,.15)}';
     (document.head || document.documentElement).appendChild(s);
   }
   function creativeFilterTick() {
@@ -4318,25 +4376,34 @@
     // require at least one VISIBLE card. (The list view has Expand/Collapse all instead.)
     const cardLayout = [...document.querySelectorAll('.ac-card')].some(c => c.offsetParent !== null);
     if (!creativeFilterOn() || aid().indexOf('today.') !== 0 || !cardLayout) { if (existing) existing.remove(); return; }
-    const search = document.querySelector('.frmTaskSearch');
+    const anchor = document.querySelector('.frmTaskSearch');
+    if (!anchor) { if (existing) existing.remove(); return; }
     const projects = creativeProjects();
-    if (!search || projects.length < 2) { if (existing) existing.remove(); return; } // nothing to filter with 0–1 projects
     ensureCreativeFilterStyle();
     let wrap = existing;
     if (!wrap) {
-      wrap = document.createElement('label'); wrap.id = 'uxa-projfilter'; wrap.className = 'uxa-projfilter';
-      wrap.innerHTML = '<span>Project</span><select aria-label="Filter by project"></select>';
-      wrap.querySelector('select').addEventListener('change', e => { creativeProj = e.target.value; creativeApply(); });
-      (search.parentElement || search).appendChild(wrap);
+      // A div (not a <label>) since it holds several controls: a free-text search (project / client / task), a "Due this
+      // week" toggle, and — when there's more than one project — the existing project dropdown. All three feed creativeApply.
+      wrap = document.createElement('div'); wrap.id = 'uxa-projfilter'; wrap.className = 'uxa-projfilter';
+      wrap.innerHTML = '<input type="search" class="uxa-pf-search" placeholder="Search project or client" aria-label="Search tasks by project or client">'
+        + '<label class="uxa-pf-due"><input type="checkbox"><span class="uxa-pf-box" aria-hidden="true">✓</span><span>Due this week</span></label>'
+        + '<select class="uxa-pf-proj" aria-label="Filter by project" hidden></select>';
+      wrap.querySelector('.uxa-pf-search').addEventListener('input', e => { creativeSearch = e.target.value.trim().toLowerCase(); creativeApply(); });
+      wrap.querySelector('.uxa-pf-due input').addEventListener('change', e => { creativeDueWeek = e.target.checked; creativeApply(); });
+      wrap.querySelector('.uxa-pf-proj').addEventListener('change', e => { creativeProj = e.target.value; creativeApply(); });
+      (anchor.parentElement || anchor).appendChild(wrap);
     }
-    const sel = wrap.querySelector('select');
-    const sig = projects.map(p => p.key).join('|');
-    if (sel.dataset.sig !== sig) {
-      if (creativeProj && !projects.some(p => p.key === creativeProj)) creativeProj = '';
-      sel.innerHTML = '<option value="">All projects</option>' + projects.map(p => `<option value="${esc(p.key)}"${p.key === creativeProj ? ' selected' : ''}>${esc(p.name.length > 46 ? p.name.slice(0, 44) + '…' : p.name)}</option>`).join('');
-      sel.value = creativeProj;
-      sel.dataset.sig = sig;
-    }
+    const sel = wrap.querySelector('.uxa-pf-proj');
+    if (projects.length >= 2) {
+      sel.hidden = false;
+      const sig = projects.map(p => p.key).join('|');
+      if (sel.dataset.sig !== sig) {
+        if (creativeProj && !projects.some(p => p.key === creativeProj)) creativeProj = '';
+        sel.innerHTML = '<option value="">All projects</option>' + projects.map(p => `<option value="${esc(p.key)}"${p.key === creativeProj ? ' selected' : ''}>${esc(p.name.length > 46 ? p.name.slice(0, 44) + '…' : p.name)}</option>`).join('');
+        sel.value = creativeProj;
+        sel.dataset.sig = sig;
+      }
+    } else { sel.hidden = true; creativeProj = ''; sel.dataset.sig = ''; }
     creativeApply();
   }
 
