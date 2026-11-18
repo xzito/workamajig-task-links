@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.92.0';
+  const VERSION = '0.93.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -815,15 +815,29 @@
   function ensureBudgetBarStyle() {
     if (document.getElementById('uxa-bbar-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-bbar-style';
-    // The gauge floats at the bottom of the consumed-$ cell so it never disturbs the number's own position. The track is
-    // a neutral rail; fill + label share one health colour (green under budget, amber near it, red over). The label sits
-    // beside the bar (not on it) so it reads at any fill, 2% or 112% alike. pointer-events stay off the bar so cell
-    // clicks pass through; only the label accepts hover, to surface the exact dollars in its tooltip.
-    s.textContent = '.uxa-bbar{position:absolute;left:0;right:0;bottom:5px;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:none;z-index:2}'
+    // The gauge sits directly under the dollar figure (not at the cell bottom — these grouped rows can be very tall, which
+    // would strand a bottom-anchored bar far from its number, even reading as the next row's). We lay the consumed cell out
+    // as a right-aligned column (number, then bar) so the two stay glued together at any row height. The track is a neutral
+    // rail; fill + label share one health colour (green under budget, amber near it, red over). The label sits beside the
+    // bar (not on it) so it reads at any fill, 2% or 112% alike. pointer-events stay off the bar so cell clicks pass
+    // through; only the label accepts hover, to surface the exact dollars in its tooltip.
+    s.textContent = '.uxa-bbar{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:3px;pointer-events:none}'
       + '.uxa-bbar .uxa-bbar-track{position:relative;width:62px;height:7px;border-radius:4px;background:#e3e6ea;overflow:hidden;flex:0 0 auto}'
       + '.uxa-bbar .uxa-bbar-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px}'
       + '.uxa-bbar .uxa-bbar-lbl{font:700 10px/1 -apple-system,Segoe UI,Roboto,sans-serif;letter-spacing:.2px;pointer-events:auto;cursor:default}';
     (document.head || document.documentElement).appendChild(s);
+  }
+  // Lay the consumed cell out so the bar sits right under its number; undo it when the cell loses its bar (grids recycle
+  // cells on scroll, so a cell that no longer carries a bar must return to its native layout).
+  function bbSetCell(cell) {
+    // flex-start keeps the number at the cell top (aligned with the other columns' values in tall grouped rows); the bar
+    // follows directly beneath it. align-items flex-end keeps both right-aligned, matching the dollar column.
+    cell.style.display = 'flex'; cell.style.flexDirection = 'column';
+    cell.style.alignItems = 'flex-end'; cell.style.justifyContent = 'flex-start'; cell.style.gap = '2px';
+  }
+  function bbClearCell(cell) {
+    if (!cell) return;
+    for (const p of ['display', 'flexDirection', 'alignItems', 'justifyContent', 'gap']) cell.style[p] = '';
   }
   let bbSig = '', bbIdx = -1;
   // Find the column index whose cells display the consumed figure, by matching cell text to each record across rows.
@@ -856,14 +870,14 @@
   }
   function budgetBarTick() {
     const grid = budgetBarOn() ? curGrids().find(g => g.gid === BB_GID) : null;
-    if (!grid) { document.querySelectorAll('.uxa-bbar').forEach(b => b.remove()); bbSig = ''; bbIdx = -1; return; }
+    if (!grid) { document.querySelectorAll('.uxa-bbar').forEach(b => { bbClearCell(b.parentElement); b.remove(); }); bbSig = ''; bbIdx = -1; return; }
     const recByKey = new Map();
     for (const v of (grid.ctl.vdom || [])) if (v && v.data && typeof v.data === 'object') recByKey.set(String(v.key), v.data);
     if (!recByKey.size) return;
     // Recompute the consumed column only when the column set changes (same signature idea as the "$" feature).
     const sig = [...grid.el.querySelectorAll('grid-cell.header[data-idx]')].map(h => h.getAttribute('data-idx') + (h.textContent || '').trim()).join(',');
     if (sig !== bbSig) { bbIdx = bbConsumedIdx(grid.el, recByKey); bbSig = sig; }
-    if (bbIdx < 0) { grid.el.querySelectorAll('.uxa-bbar').forEach(b => b.remove()); return; }
+    if (bbIdx < 0) { grid.el.querySelectorAll('.uxa-bbar').forEach(b => { bbClearCell(b.parentElement); b.remove(); }); return; }
     ensureBudgetBarStyle();
     for (const row of grid.el.querySelectorAll('grid-row.datarow[data-key]')) {
       const rec = recByKey.get(row.getAttribute('data-key'));
@@ -872,11 +886,11 @@
       const budget = (+rec.CurrentBudgetLaborGross || 0) + (+rec.CurrentBudgetExpenseGross || 0);
       const consumed = (+rec.TotalLaborGross || 0) + (+rec.TotalCostsGross || 0);
       const old = cell.querySelector(':scope > .uxa-bbar');
-      if (budget <= 0) { if (old) old.remove(); continue; }           // no budget set -> no meaningful %
+      if (budget <= 0) { if (old) { old.remove(); bbClearCell(cell); } continue; } // no budget set -> no meaningful %
       const pct = consumed / budget, disp = Math.round(pct * 100), col = bbColor(pct);
       if (old && old.dataset.pct === String(disp)) continue;          // unchanged -> leave it
       if (old) old.remove();
-      if (getComputedStyle(cell).position === 'static') cell.style.position = 'relative';
+      bbSetCell(cell);
       const bar = document.createElement('span');
       bar.className = 'uxa-bbar'; bar.dataset.pct = String(disp);
       bar.innerHTML = '<span class="uxa-bbar-track"><span class="uxa-bbar-fill" style="width:' + Math.max(0, Math.min(100, pct * 100)) + '%;background:' + col + '"></span></span>'
