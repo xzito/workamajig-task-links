@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.93.0';
+  const VERSION = '0.94.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -830,14 +830,15 @@
   // Lay the consumed cell out so the bar sits right under its number; undo it when the cell loses its bar (grids recycle
   // cells on scroll, so a cell that no longer carries a bar must return to its native layout).
   function bbSetCell(cell) {
-    // flex-start keeps the number at the cell top (aligned with the other columns' values in tall grouped rows); the bar
-    // follows directly beneath it. align-items flex-end keeps both right-aligned, matching the dollar column.
-    cell.style.display = 'flex'; cell.style.flexDirection = 'column';
-    cell.style.alignItems = 'flex-end'; cell.style.justifyContent = 'flex-start'; cell.style.gap = '2px';
+    // Block (not flex): the dollar figure stays on one inline line — including the "$" the currency feature adds as a
+    // ::before, which a flex column would stack onto its own line — and the bar, a block, flows directly beneath it.
+    // text-align:right keeps the figure and bar on the right, matching the dollar column; block flow keeps the figure at
+    // the cell top, aligned with the other columns' values in tall grouped rows.
+    cell.style.display = 'block'; cell.style.textAlign = 'right';
   }
   function bbClearCell(cell) {
     if (!cell) return;
-    for (const p of ['display', 'flexDirection', 'alignItems', 'justifyContent', 'gap']) cell.style[p] = '';
+    for (const p of ['display', 'textAlign', 'flexDirection', 'alignItems', 'justifyContent', 'gap']) cell.style[p] = '';
   }
   let bbSig = '', bbIdx = -1;
   // Find the column index whose cells display the consumed figure, by matching cell text to each record across rows.
