@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.97.0';
+  const VERSION = '0.98.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -812,6 +812,7 @@
   const BB_GID = 'grdProductionDash';
   function bbColor(pct) { return pct > 1 ? '#e53e3e' : (pct >= 0.85 ? '#dd8800' : '#38a169'); }
   function bbMoney(n) { return '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function bbHours(n) { return (Math.round(n * 100) / 100).toLocaleString('en-US') + ' hrs'; }
   function ensureBudgetBarStyle() {
     if (document.getElementById('uxa-bbar-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-bbar-style';
@@ -840,63 +841,90 @@
     if (!cell) return;
     for (const p of ['display', 'textAlign', 'flexDirection', 'alignItems', 'justifyContent', 'gap']) cell.style[p] = '';
   }
-  let bbSig = '', bbIdx = -1;
-  // Find the column index whose cells display the consumed figure, by matching cell text to each record across rows.
-  // Tries the combined labor+costs sum first (the Accounting "Current Labor + Expenses" column), then labor alone.
-  function bbConsumedIdx(gridEl, recByKey) {
+  // Each gauge: its "consumed" figure (numer) over its budget (denom), drawn in whichever cell displays that consumed
+  // figure. The cell is found by matching cell text to numer across rows (rename-/layout-proof), so a bar rides along in
+  // any layout that surfaces its column and stays away from ones that don't:
+  //   money — Current Labor + Expenses (TotalLaborGross + TotalCostsGross) over the current $ budget (Accounting layout)
+  //   hours — Budget Hrs Actual (ActualHours) over Budget Hrs Est / original budget hours (PM layout)
+  const BB_SPECS = [
+    // money: value-match the combined figure, but NEVER a split Total Labor/Costs column — when a project has zero costs
+    // those tie the sum, which would wrongly draw the $ bar on "Total Labor Gross" in the hours (PM) layout.
+    { key: 'money', noun: 'Budget consumed', fmt: bbMoney, excludeField: /TotalLaborGross|TotalCostsGross/i,
+      numer: r => (+r.TotalLaborGross || 0) + (+r.TotalCostsGross || 0),
+      denom: r => (+r.CurrentBudgetLaborGross || 0) + (+r.CurrentBudgetExpenseGross || 0) },
+    // hours: the "Budget Hrs Actual" column, found by its stable field token (ActualHours) so a label override can't move
+    // it; over the original budget hours ("Budget Hrs Est"), matching how that layout derives "Budget Hrs Remaining".
+    { key: 'hours', noun: 'Hours used', fmt: bbHours, field: /ActualHours$/i,
+      numer: r => (+r.ActualHours || 0),
+      denom: r => (+r.OriginalBudgetHours || 0) }
+  ];
+  let bbSig = '', bbIdx = {}; // spec key -> column index (or -1) for the current column set
+  // ctl.columns is a stable "field|Label,field|Label,…" list in column order; index i -> that column's field token.
+  function bbColTokens(ctl) { return String((ctl && ctl.columns) || '').split(',').map(t => (t.split('|')[0] || '').trim()); }
+  // The column index for a spec: its field token if named (robust to label overrides), else the column whose cells match
+  // numer(record) across rows (≥2 distinct, exact), skipping any excluded field. -1 if none.
+  function bbMatchIdx(gridEl, recByKey, spec, tokens) {
     const rows = [...gridEl.querySelectorAll('grid-row.datarow[data-key]')].filter(r => recByKey.has(r.getAttribute('data-key')));
     if (rows.length < 2) return -1;
     const sample = rows.find(r => r.querySelector('grid-cell[data-idx]:not(.header)'));
     if (!sample) return -1;
     const idxs = [...sample.querySelectorAll('grid-cell[data-idx]:not(.header)')].map(c => c.getAttribute('data-idx'));
-    const valueFns = [
-      rec => (+rec.TotalLaborGross || 0) + (+rec.TotalCostsGross || 0),
-      rec => (+rec.TotalLaborGross || 0)
-    ];
-    for (const valueOf of valueFns) {
-      for (const idx of idxs) {
-        let ok = 0, seen = 0, first = null, distinct = false, bad = false;
-        for (const r of rows) {
-          const rec = recByKey.get(r.getAttribute('data-key'));
-          const c = r.querySelector('grid-cell[data-idx="' + idx + '"]:not(.header)'); if (!c) continue;
-          const raw = (c.textContent || '').trim(); if (raw === '') continue;
-          const num = parseFloat(raw.replace(/[$,\s]/g, '')); if (isNaN(num)) { bad = true; break; }
-          seen++; if (Math.abs(num - valueOf(rec)) < 0.02) ok++; else { bad = true; break; }
-          if (first === null) first = num; else if (num !== first) distinct = true;
-        }
-        if (!bad && seen >= 2 && ok === seen && distinct) return idx;
+    if (spec.field) { for (const idx of idxs) if (spec.field.test(tokens[Number(idx)] || '')) return idx; }
+    for (const idx of idxs) {
+      if (spec.excludeField && spec.excludeField.test(tokens[Number(idx)] || '')) continue;
+      let ok = 0, seen = 0, first = null, distinct = false, bad = false;
+      for (const r of rows) {
+        const rec = recByKey.get(r.getAttribute('data-key'));
+        const c = r.querySelector('grid-cell[data-idx="' + idx + '"]:not(.header)'); if (!c) continue;
+        const raw = (c.textContent || '').trim(); if (raw === '') continue;
+        const num = parseFloat(raw.replace(/[$,\s]/g, '')); if (isNaN(num)) { bad = true; break; }
+        seen++; if (Math.abs(num - spec.numer(rec)) < 0.02) ok++; else { bad = true; break; }
+        if (first === null) first = num; else if (num !== first) distinct = true;
       }
+      if (!bad && seen >= 2 && ok === seen && distinct) return idx;
     }
     return -1;
   }
+  function bbPlace(cell, consumed, budget, spec) {
+    const pct = consumed / budget, disp = Math.round(pct * 100), col = bbColor(pct);
+    const old = cell.querySelector(':scope > .uxa-bbar');
+    if (old && old.dataset.pct === String(disp) && old.dataset.spec === spec.key) return; // unchanged -> leave it
+    if (old) old.remove();
+    bbSetCell(cell);
+    const bar = document.createElement('span');
+    bar.className = 'uxa-bbar'; bar.dataset.pct = String(disp); bar.dataset.spec = spec.key;
+    bar.innerHTML = '<span class="uxa-bbar-track"><span class="uxa-bbar-fill" style="width:' + Math.max(0, Math.min(100, pct * 100)) + '%;background:' + col + '"></span></span>'
+      + '<span class="uxa-bbar-lbl" style="color:' + col + '" title="' + spec.noun + ': ' + disp + '% — ' + spec.fmt(consumed) + ' of ' + spec.fmt(budget) + '">' + disp + '%</span>';
+    cell.appendChild(bar);
+  }
   function budgetBarTick() {
     const grid = budgetBarOn() ? curGrids().find(g => g.gid === BB_GID) : null;
-    if (!grid) { document.querySelectorAll('.uxa-bbar').forEach(b => { bbClearCell(b.parentElement); b.remove(); }); bbSig = ''; bbIdx = -1; return; }
+    if (!grid) { document.querySelectorAll('.uxa-bbar').forEach(b => { bbClearCell(b.parentElement); b.remove(); }); bbSig = ''; bbIdx = {}; return; }
     const recByKey = new Map();
     for (const v of (grid.ctl.vdom || [])) if (v && v.data && typeof v.data === 'object') recByKey.set(String(v.key), v.data);
     if (!recByKey.size) return;
-    // Recompute the consumed column only when the column set changes (same signature idea as the "$" feature).
+    // Recompute each spec's column only when the column set changes; a change also clears every bar so stale ones (on
+    // columns the new layout drops) can't linger on recycled cells.
     const sig = [...grid.el.querySelectorAll('grid-cell.header[data-idx]')].map(h => h.getAttribute('data-idx') + (h.textContent || '').trim()).join(',');
-    if (sig !== bbSig) { bbIdx = bbConsumedIdx(grid.el, recByKey); bbSig = sig; }
-    if (bbIdx < 0) { grid.el.querySelectorAll('.uxa-bbar').forEach(b => { bbClearCell(b.parentElement); b.remove(); }); return; }
+    if (sig !== bbSig) {
+      grid.el.querySelectorAll('.uxa-bbar').forEach(b => { bbClearCell(b.parentElement); b.remove(); });
+      const tokens = bbColTokens(grid.ctl);
+      bbIdx = {}; for (const spec of BB_SPECS) bbIdx[spec.key] = bbMatchIdx(grid.el, recByKey, spec, tokens);
+      bbSig = sig;
+    }
+    if (!BB_SPECS.some(s => bbIdx[s.key] >= 0)) return; // no gauge columns in this layout
     ensureBudgetBarStyle();
-    for (const row of grid.el.querySelectorAll('grid-row.datarow[data-key]')) {
-      const rec = recByKey.get(row.getAttribute('data-key'));
-      const cell = row.querySelector('grid-cell[data-idx="' + bbIdx + '"]:not(.header)');
-      if (!rec || !cell) continue;
-      const budget = (+rec.CurrentBudgetLaborGross || 0) + (+rec.CurrentBudgetExpenseGross || 0);
-      const consumed = (+rec.TotalLaborGross || 0) + (+rec.TotalCostsGross || 0);
-      const old = cell.querySelector(':scope > .uxa-bbar');
-      if (budget <= 0) { if (old) { old.remove(); bbClearCell(cell); } continue; } // no budget set -> no meaningful %
-      const pct = consumed / budget, disp = Math.round(pct * 100), col = bbColor(pct);
-      if (old && old.dataset.pct === String(disp)) continue;          // unchanged -> leave it
-      if (old) old.remove();
-      bbSetCell(cell);
-      const bar = document.createElement('span');
-      bar.className = 'uxa-bbar'; bar.dataset.pct = String(disp);
-      bar.innerHTML = '<span class="uxa-bbar-track"><span class="uxa-bbar-fill" style="width:' + Math.max(0, Math.min(100, pct * 100)) + '%;background:' + col + '"></span></span>'
-        + '<span class="uxa-bbar-lbl" style="color:' + col + '" title="Budget consumed: ' + disp + '% — ' + bbMoney(consumed) + ' of ' + bbMoney(budget) + '">' + disp + '%</span>';
-      cell.appendChild(bar);
+    for (const spec of BB_SPECS) {
+      const idx = bbIdx[spec.key]; if (idx < 0) continue;
+      for (const row of grid.el.querySelectorAll('grid-row.datarow[data-key]')) {
+        const rec = recByKey.get(row.getAttribute('data-key'));
+        const cell = row.querySelector('grid-cell[data-idx="' + idx + '"]:not(.header)');
+        if (!rec || !cell) continue;
+        const budget = spec.denom(rec), consumed = spec.numer(rec);
+        const old = cell.querySelector(':scope > .uxa-bbar');
+        if (!(budget > 0)) { if (old) { old.remove(); bbClearCell(cell); } continue; } // no budget set -> no meaningful %
+        bbPlace(cell, consumed, budget, spec);
+      }
     }
   }
 
