@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.96.0';
+  const VERSION = '0.97.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -1206,8 +1206,12 @@
       try {
         const res = await call('WJAPP.Modules.Project.Traffic', 'updateAssignmentStatus', { TaskUserKey: Number(tuk), TaskUserStatusKey: k }, true);
         if (res.errors && res.errors.length) throw new Error(res.errors.map(x => x.message).join('; '));
-        // Update the page's own model so its "% complete" button and anything bound to it refresh.
-        const pc = await serverPercComp(tuk);
+        // Update the page's own model so its "% complete" button and anything bound to it refresh. Mirror Workamajig's
+        // Default Percent Complete for the new status (the status call alone doesn't set it), else read back the server's.
+        const defPct = statusDefaultPct(st.l);
+        let pc = null;
+        if (defPct != null) { try { pc = await saveAssignmentPercComp(a.projectKey, Number(tuk), defPct); } catch (e) { pc = await serverPercComp(tuk); } }
+        else pc = await serverPercComp(tuk);
         const t = ta();
         if (t && t.si) { t.si.TaskUserStatusKey = k; t.si.StatusName = st.l; if (pc != null) t.si.PercComp = pc; t.fire(); }
         scheduleCache.delete(String(a.projectKey));
@@ -4066,7 +4070,7 @@
         const statusKey = tu.TaskUserStatusKey > 0 ? tu.TaskUserStatusKey : 0;
         const statusName = (tu.StatusName || '').trim();
         const color = STATUS_COLORS[statusName] || (done ? '#1a7f37' : pc > 0 ? '#1a6dc4' : '#8a8a8a');
-        tstatCache.set(timeKey, { tuk: Number(tu.TaskUserKey), statusKey, statusName, options, color });
+        tstatCache.set(timeKey, { tuk: Number(tu.TaskUserKey), projectKey: hit.projectKey, statusKey, statusName, options, color });
         return;
       }
       const label = done ? 'Complete' : pc > 0 ? 'In progress' : 'Not started';
@@ -4089,6 +4093,9 @@
       info.statusKey = newKey; info.statusName = opt ? opt.l : '';
       info.color = STATUS_COLORS[info.statusName] || '#8a8a8a';
       tstatCache.set(key, info);
+      // Mirror Workamajig's Default Percent Complete for the new status (the status call alone doesn't persist it).
+      const defPct = statusDefaultPct(info.statusName);
+      if (defPct != null && info.projectKey) { try { await saveAssignmentPercComp(info.projectKey, tuk, defPct); } catch (e) {} }
       const dot = sel.parentElement && sel.parentElement.querySelector('.d');
       if (dot) dot.style.background = info.color;
       toast('Status updated');
