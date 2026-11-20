@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.3';
+  const VERSION = '0.99.4';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4533,7 +4533,7 @@
   const RS_AID = 'projects.traffic.rm';
   const RS_CLS = 'WJAPP.Modules.Project.ResourceManagement';
   const RS_APP = 'getStaffSchedule_getStaffDetail';
-  const RS_BAR = 20, RS_GAP = 4;                   // bar height + vertical gap, px
+  const RS_BAR = 34, RS_GAP = 4;                   // bar height + vertical gap, px
   const RS_FLAG = ['WorkSun', 'WorkMon', 'WorkTue', 'WorkWed', 'WorkThur', 'WorkFri', 'WorkSat'];                       // by Date.getDay()
   function resourceScheduleOn() { return true; }
   const rs = {
@@ -4542,7 +4542,7 @@
     data: new Map(),                               // "<weekIso>|<userKey>" -> null (loading) | { tasks, time, err }
     status: new Map(),                             // TaskUserStatusKey -> { color, name }
     maxHours: 8, filterKeys: null,                 // hours/day capacity + the viewer's saved Scheduling "Users" filter
-    q: '', plannedOnly: false, weekends: false, useFilter: true, meetings: false, calBusy: false, sort: 'name',
+    q: '', plannedOnly: false, weekends: false, useFilter: true, meetings: false, calBusy: false, sort: 'name', span: 2,   // span = weeks shown side by side (1 or 2)
     f: { me: false, client: new Set(), project: new Set(), owner: new Set(), role: new Set(), status: new Set() },   // Filter menu picks
     fl: {}, fmenu: null,                           // fl = labels of picked values (for chips); fmenu = null | 'root' | category
     collapsed: new Set(), gen: 0, raf: 0
@@ -4552,6 +4552,7 @@
   const rsAdd = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
   const rsToday = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
   const rsMonday = d => rsAdd(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -((d.getDay() + 6) % 7));
+  const rsWeeks = () => Array.from({ length: rs.span === 1 ? 1 : 2 }, (_, i) => rsAdd(rs.week, i * 7));   // the Mondays shown
   const rsNum = n => (Math.round(n * 10) / 10).toLocaleString('en-US');
   const rsLevel = (hrs, cap) => !cap ? (hrs > 0 ? 'over' : 'off') : (hrs / cap > 1.0001 ? 'over' : (hrs / cap >= 0.85 ? 'warn' : 'ok'));
   // Dark or white text, whichever reads on the status colour (Workamajig's palette runs from pale grey to deep red).
@@ -4616,23 +4617,25 @@
   }
   // Quietly re-read one person's shown week (after the task modal closes); the lane keeps its old bars until it lands.
   async function rsReloadUser(userKey) {
-    const wk = rsIso(rs.week), key = wk + '|' + userKey, old = rs.data.get(key);
-    if (!old) return;
-    try { const rec = await rsWeekRec(userKey, wk, rsIso(rsAdd(rs.week, 6))); if (Array.isArray(old.cal)) rec.cal = old.cal; rs.data.set(key, rec); rsDrawSoon(); } catch (e) {}
+    for (const w of rsWeeks()) {
+      const wk = rsIso(w), key = wk + '|' + userKey, old = rs.data.get(key);
+      if (!old) continue;
+      try { const rec = await rsWeekRec(userKey, wk, rsIso(rsAdd(w, 6))); if (Array.isArray(old.cal)) rec.cal = old.cal; rs.data.set(key, rec); rsDrawSoon(); } catch (e) {}
+    }
   }
   // Load the shown week for everyone not cached yet, four people at a time (the native screen loads them one by one).
   function rsQueue() {
     if (!rs.open || !rs.staff) return;
-    const wk = rsIso(rs.week), end = rsIso(rsAdd(rs.week, 6)), gen = rs.gen;
-    const todo = rsPeople().filter(u => !rs.data.has(wk + '|' + u.UserKey));
+    const gen = rs.gen, todo = [];
+    for (const w of rsWeeks()) for (const u of rsPeople()) if (!rs.data.has(rsIso(w) + '|' + u.UserKey)) todo.push({ u, w });   // first week first
     let i = 0;
     const worker = async () => {
       while (i < todo.length && rs.open && gen === rs.gen) {
-        const u = todo[i++], key = wk + '|' + u.UserKey;
+        const { u, w } = todo[i++], wk = rsIso(w), key = wk + '|' + u.UserKey;
         if (rs.data.has(key)) continue;
         rs.data.set(key, null);
         try {
-          rs.data.set(key, await rsWeekRec(u.UserKey, wk, end));
+          rs.data.set(key, await rsWeekRec(u.UserKey, wk, rsIso(rsAdd(w, 6))));
         } catch (e) { rs.data.set(key, { tasks: [], time: [], err: true }); }
         rsDrawSoon();
       }
@@ -4647,8 +4650,8 @@
     try {
       for (;;) {
         if (!rs.meetings || !rs.open) break;
-        const wk = rsIso(rs.week), week = rs.week;
-        const u = rsPeople().find(x => { const r = rs.data.get(wk + '|' + x.UserKey); return r && !r.err && r.cal === undefined; });
+        let u = null, week = null, wk = '';
+        for (const w of rsWeeks()) { u = rsPeople().find(x => { const r = rs.data.get(rsIso(w) + '|' + x.UserKey); return r && !r.err && r.cal === undefined; }); if (u) { week = w; wk = rsIso(w); break; } }
         if (!u) break;
         const rec = rs.data.get(wk + '|' + u.UserKey); rec.cal = null;   // null = loading
         try {
@@ -4684,10 +4687,13 @@
     return true;
   }
   function rsFOptions(cat) {
-    const wk = rsIso(rs.week), m = new Map();
-    for (const u of rsPeople()) {
-      const rec = rs.data.get(wk + '|' + u.UserKey); if (!rec) continue;
-      for (const t of rec.tasks) for (const [v, l] of rsFVals(cat, t)) { const o = m.get(v) || { v, l, n: 0 }; o.n++; m.set(v, o); }
+    const m = new Map(), seen = new Set();
+    for (const w of rsWeeks()) for (const u of rsPeople()) {
+      const rec = rs.data.get(rsIso(w) + '|' + u.UserKey); if (!rec) continue;
+      for (const t of rec.tasks) {
+        const once = !seen.has(t.TaskUserKey); seen.add(t.TaskUserKey);   // count an assignment once across the weeks
+        for (const [v, l] of rsFVals(cat, t)) { const o = m.get(v) || { v, l, n: 0 }; if (once) o.n++; m.set(v, o); }
+      }
     }
     rs.f[cat].forEach(v => { if (!m.has(v)) m.set(v, { v, l: rs.fl[cat + '|' + v] || v, n: 0 }); });   // keep picks visible in other weeks
     return [...m.values()].sort((a, b) => a.l.localeCompare(b.l));
@@ -4782,79 +4788,97 @@
       + '.uxa-rs-col.we{background:#fafbfc}.uxa-rs-col.td{background:rgba(122,181,29,.06)}'
       + '.uxa-rs-bar{position:absolute;height:' + RS_BAR + 'px;border-radius:5px;display:flex;align-items:center;padding:0 7px;font-size:11px;font-weight:600;text-decoration:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10);overflow:hidden}'
       + '#uxa-rs .uxa-rs-bar:hover{filter:brightness(.94);box-shadow:inset 0 0 0 1px rgba(0,0,0,.25);text-decoration:none}'
-      + '.uxa-rs-bar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+      + '.uxa-rs-bar span{display:flex;flex-direction:column;justify-content:center;min-width:0;line-height:1.25}'
+      + '.uxa-rs-bar b,.uxa-rs-bar small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+      + '.uxa-rs-bar b{font-weight:600;font-size:12px}.uxa-rs-bar small{font-weight:400;font-size:10px;opacity:.85}'
+      + '.uxa-rs-dh.wk,.uxa-rs-cap.wk,.uxa-rs-col.wk{border-left:2px solid #aab4c2}'
       + '.uxa-rs-bar em{font-style:normal;font-weight:700;margin-left:auto;padding-left:8px;white-space:nowrap;opacity:.9}'
       + '.uxa-rs-bar.zero{opacity:.5}'
+      + '.uxa-rs-track{min-height:' + (RS_BAR + 2 * RS_GAP) + 'px}'
       + '.uxa-rs-msg{padding:6px 12px;color:#8a93a0;font-size:12px;font-style:italic}'
       + '.uxa-rs-empty{padding:28px;color:#8a93a0}';
     (document.head || document.documentElement).appendChild(s);
   }
   function rsDraw() {
     const root = document.getElementById('uxa-rs'); if (!root || !rs.open) return;
-    const all = Array.from({ length: 7 }, (_, i) => rsAdd(rs.week, i));
-    const days = rs.weekends ? all : all.slice(0, 5), n = days.length, today = rsToday(), wk = rsIso(rs.week);
-    const sun = all[6], mo = d => d.toLocaleDateString('en-US', { month: 'short' });
-    root.querySelector('.uxa-rs-week').textContent = mo(rs.week) + ' ' + rs.week.getDate() + ' – ' + (sun.getMonth() !== rs.week.getMonth() ? mo(sun) + ' ' : '') + sun.getDate() + ', ' + sun.getFullYear();
+    // One or two weeks side by side (the second is the "glimpse into next week"). Each week is its own record per
+    // person — Workamajig allocates hours per week — so capacity cells come week by week, while an assignment that
+    // runs across both weeks is drawn as ONE bar.
+    const weeks = rsWeeks(), today = rsToday();
+    const wdays = weeks.map(w => Array.from({ length: 7 }, (_, i) => rsAdd(w, i)));   // all 7 days of each week
+    const vis = wdays.map(a => rs.weekends ? a : a.slice(0, 5)), per = vis[0].length;
+    const days = [].concat(...vis), n = days.length, wk0 = rsIso(weeks[0]), all = wdays[0];
+    const end = wdays[wdays.length - 1][6], mo = d => d.toLocaleDateString('en-US', { month: 'short' });
+    root.querySelector('.uxa-rs-week').textContent = mo(rs.week) + ' ' + rs.week.getDate() + ' – ' + (end.getMonth() !== rs.week.getMonth() ? mo(end) + ' ' : '') + end.getDate() + ', ' + end.getFullYear();
     const allBtn = root.querySelector('.uxa-rs-all');
     if (allBtn) allBtn.textContent = rsPeople().some(u => !rs.collapsed.has(u.UserKey)) ? 'Collapse all' : 'Expand all';
     const body = root.querySelector('.uxa-rs-body');
     if (!rs.staff) { body.innerHTML = '<div class="uxa-rs-empty">Loading the team…</div>'; return; }
     if (!rs.staff.length) { body.innerHTML = '<div class="uxa-rs-empty">' + (rs.staffErr ? 'Couldn’t load the staff list from Workamajig. Try Refresh.' : 'No staff to show. Resource scheduling may not be available for your Workamajig login.') + '</div>'; return; }
-    const dcls = d => (d.getDay() === 0 || d.getDay() === 6 ? ' we' : '') + (+d === +today ? ' td' : '');
+    const dcls = (d, i) => (d.getDay() === 0 || d.getDay() === 6 ? ' we' : '') + (+d === +today ? ' td' : '') + (i && i % per === 0 ? ' wk' : '');
     let html = '<div class="uxa-rs-head"><div class="uxa-rs-who"></div><div class="uxa-rs-days">'
-      + days.map(d => `<div class="uxa-rs-dh${dcls(d)}">${esc(d.toLocaleDateString('en-US', { weekday: 'short' }))} <b>${d.getDate()}</b></div>`).join('') + '</div></div>';
-    const cols = days.map((d, i) => `<div class="uxa-rs-col${dcls(d)}" style="left:${(i / n * 100).toFixed(4)}%;width:${(100 / n).toFixed(4)}%"></div>`).join('');
+      + days.map((d, i) => `<div class="uxa-rs-dh${dcls(d, i)}">${esc(d.toLocaleDateString('en-US', { weekday: 'short' }))} <b>${d.getDate()}</b></div>`).join('') + '</div></div>';
+    const cols = days.map((d, i) => `<div class="uxa-rs-col${dcls(d, i)}" style="left:${(i / n * 100).toFixed(4)}%;width:${(100 / n).toFixed(4)}%"></div>`).join('');
     const q = rs.q, fOn = rsFTasksOn(), me = rs.f.me ? rsMe() : 0; let shown = 0;
+    const rowH = RS_BAR + RS_GAP;
     rsDrawChips();
-    // People in the chosen order; anyone still loading sorts last (by name) until their week arrives.
-    const ppl = rsPeople().map(u => { const rec = rs.data.get(wk + '|' + u.UserKey); let tot = 0, cap = 0; if (rec) rsUserDays(rec, all).forEach(x => { tot += x.hrs; cap += x.cap; }); return { u, rec, tot, cap }; });
+    // People in the chosen order (by the first week's numbers); anyone still loading sorts last until their week arrives.
+    const ppl = rsPeople().map(u => { const rec = rs.data.get(wk0 + '|' + u.UserKey); let tot = 0, cap = 0; if (rec) rsUserDays(rec, all).forEach(x => { tot += x.hrs; cap += x.cap; }); return { u, rec, tot, cap }; });
     if (rs.sort !== 'name') {
       const val = x => rs.sort === 'util' ? (x.cap ? x.tot / x.cap : (x.tot ? 99 : 0)) : (rs.sort === 'avail' ? x.cap - x.tot : x.tot);
       ppl.sort((a, b) => (!a.rec - !b.rec) || (val(b) - val(a)) || String(a.u.UserName).localeCompare(String(b.u.UserName)));
     }
-    for (const { u, rec } of ppl) {
+    for (const { u, rec, tot, cap } of ppl) {
       if (me && u.UserKey !== me) continue;
       const nameHit = !q || String(u.UserName).toLowerCase().indexOf(q) >= 0;
-      let tasks = [];
-      if (rec) {
-        for (const t of rec.tasks) {
-          if (rs.plannedOnly && !(+t.DisplayHours > 0)) continue;
+      const recs = weeks.map(w => rs.data.get(rsIso(w) + '|' + u.UserKey));
+      // Assignments across the shown weeks, merged per assignment: first/last visible day index + hours allocated.
+      const byKey = new Map();
+      recs.forEach((r, wi) => {
+        if (!r) return;
+        for (const t of r.tasks) {
           if (fOn && !rsFPass(t)) continue;
           if (q && !nameHit && [t.ProjectNumber, t.ProjectName, t.TaskName, t.CompanyName].join(' ').toLowerCase().indexOf(q) < 0) continue;
           let first = -1, last = -1;
-          days.forEach((d, i) => { if (rsActive(t, d)) { if (first < 0) first = i; last = i; } });
-          if (first >= 0) tasks.push({ t, first, last });
+          vis[wi].forEach((d, i) => { if (rsActive(t, d)) { if (first < 0) first = wi * per + i; last = wi * per + i; } });
+          if (first < 0) continue;
+          const k = t.TaskUserKey || ('t' + t.TaskKey), e = byKey.get(k);
+          if (e) { e.first = Math.min(e.first, first); e.last = Math.max(e.last, last); e.dh += +t.DisplayHours || 0; }
+          else byKey.set(k, { t, first, last, dh: +t.DisplayHours || 0 });
         }
-        // work with hours left this week first, then by where it starts on the timeline
-        tasks.sort((a, b) => ((+b.t.DisplayHours > 0) - (+a.t.DisplayHours > 0)) || (a.first - b.first) || (b.last - a.last));
-      }
+      });
+      let tasks = [...byKey.values()];
+      if (rs.plannedOnly) tasks = tasks.filter(x => x.dh > 0);
+      // work with hours left first, then by where it starts on the timeline
+      tasks.sort((a, b) => ((b.dh > 0) - (a.dh > 0)) || (a.first - b.first) || (b.last - a.last));
       if ((q && !nameHit && !tasks.length) || (fOn && rec && !tasks.length)) continue;
       shown++;
       const open = !rs.collapsed.has(u.UserKey);
-      let sub = 'Loading…', util = '', caps = days.map(() => '<div class="uxa-rs-cap off">·</div>').join('');
+      let sub = 'Loading…', util = '';
       if (rec) {
-        const wd = rsUserDays(rec, all), tot = wd.reduce((a, x) => a + x.hrs, 0), cap = wd.reduce((a, x) => a + x.cap, 0), diff = tot - cap;
+        const diff = tot - cap;
         sub = rsNum(tot) + ' / ' + rsNum(cap) + ' h · ' + (diff > 0.05 ? `<span class="over">${rsNum(diff)} over</span>` : `<span class="avail">${rsNum(-diff)} available</span>`);
         const lv = rsLevel(tot, cap), colr = lv === 'over' ? '#e53e3e' : (lv === 'warn' ? '#dd8800' : '#38a169');
         util = `<div class="uxa-rs-util"><span style="width:${Math.min(100, cap ? tot / cap * 100 : (tot ? 100 : 0)).toFixed(1)}%;background:${colr}"></span></div>`;
-        caps = wd.slice(0, n).map(x => `<div class="uxa-rs-cap ${rsLevel(x.hrs, x.cap)}${x.logged ? ' lg' : ''}" title="${x.logged ? 'Time logged' : 'Planned hours' + (x.mt ? ' + ' + rsNum(x.mt) + ' h meetings' : '')}: ${rsNum(x.hrs)} h · capacity ${rsNum(x.cap)} h">${rsNum(x.hrs)} <small>/ ${rsNum(x.cap)}</small></div>`).join('');
-        if (fOn) sub += ' · ' + rsNum(tasks.reduce((a, x) => a + (+x.t.DisplayHours || 0), 0)) + ' h in filter';
+        if (fOn) sub += ' · ' + rsNum(tasks.reduce((a, x) => a + x.dh, 0)) + ' h in filter';
         if (rs.meetings && !Array.isArray(rec.cal)) sub += ' · meetings loading…';
         if (rec.err) sub = 'Couldn’t load — try Refresh';
       }
+      const caps = recs.map((r, wi) => !r ? vis[wi].map((d, i) => `<div class="uxa-rs-cap off${wi && !i ? ' wk' : ''}">·</div>`).join('')
+        : rsUserDays(r, wdays[wi]).slice(0, per).map((x, i) => `<div class="uxa-rs-cap ${rsLevel(x.hrs, x.cap)}${x.logged ? ' lg' : ''}${wi && !i ? ' wk' : ''}" title="${x.logged ? 'Time logged' : 'Planned hours' + (x.mt ? ' + ' + rsNum(x.mt) + ' h meetings' : '')}: ${rsNum(x.hrs)} h · capacity ${rsNum(x.cap)} h">${rsNum(x.hrs)} <small>/ ${rsNum(x.cap)}</small></div>`).join('')).join('');
       let track = '';
       if (open) {
         let bars = '';
         tasks.forEach((x, i) => {
-          const t = x.t, st = rs.status.get(t.TaskUserStatusKey) || { color: '#7a8aa0', name: '' }, dh = +t.DisplayHours >= 0.05 ? +t.DisplayHours : 0;
-          const lbl = (t.ProjectNumber ? t.ProjectNumber + ' · ' : '') + (t.TaskName || 'Task');
-          const tip = (t.ProjectFullName || t.ProjectName || '') + '\n' + (t.TaskName || '') + (st.name ? '\nStatus: ' + st.name : '')
+          const t = x.t, st = rs.status.get(t.TaskUserStatusKey) || { color: '#7a8aa0', name: '' }, dh = x.dh >= 0.05 ? x.dh : 0;
+          const proj = (t.ProjectNumber ? t.ProjectNumber + ' · ' : '') + (t.ProjectName || '');
+          const tip = (t.TaskName || '') + '\n' + (t.ProjectFullName || proj) + (st.name ? '\nStatus: ' + st.name : '')
             + '\n' + String(t.APlanStart || t.PlanStart || '').slice(0, 10) + ' → ' + String(t.APlanComplete || t.PlanComplete || '').slice(0, 10)
-            + '\nPlanned ' + rsNum(+t.Hours || 0) + ' h · logged ' + rsNum(+t.ActualHours || 0) + ' h · ' + (+t.PercComp || 0) + '% complete' + (dh ? '\n' + rsNum(dh) + ' h allocated this week' : '');
-          bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}" data-pk="${Number(t.ProjectKey) || 0}" data-task="${Number(t.TaskKey) || 0}" data-tuk="${Number(t.TaskUserKey) || 0}" data-u="${u.UserKey}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * (RS_BAR + RS_GAP) + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}"><span>${esc(lbl)}</span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}</a>`;
+            + '\nPlanned ' + rsNum(+t.Hours || 0) + ' h · logged ' + rsNum(+t.ActualHours || 0) + ' h · ' + (+t.PercComp || 0) + '% complete' + (dh ? '\n' + rsNum(dh) + ' h allocated in the weeks shown' : '');
+          bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}" data-pk="${Number(t.ProjectKey) || 0}" data-task="${Number(t.TaskKey) || 0}" data-tuk="${Number(t.TaskUserKey) || 0}" data-u="${u.UserKey}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * rowH + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}"><span><b>${esc(t.TaskName || 'Task')}</b><small>${esc(proj)}</small></span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}</a>`;
         });
-        track = rec && !tasks.length ? '<div class="uxa-rs-msg">No assignments' + (q || rs.plannedOnly || fOn ? ' match' : ' this week') + '</div>'
-          : `<div class="uxa-rs-track" style="height:${Math.max(tasks.length, 1) * (RS_BAR + RS_GAP) + RS_GAP}px">${cols}${bars}</div>`;
+        track = recs.every(r => r) && !tasks.length ? '<div class="uxa-rs-msg">No assignments' + (q || rs.plannedOnly || fOn ? ' match' : (weeks.length > 1 ? ' in these weeks' : ' this week')) + '</div>'
+          : `<div class="uxa-rs-track" style="height:${Math.max(tasks.length, 1) * rowH + RS_GAP}px">${cols}${bars}</div>`;
       }
       html += `<div class="uxa-rs-lane"><div class="uxa-rs-who" data-act="toggle" data-u="${u.UserKey}"><div class="uxa-rs-name"><i>${open ? '▾' : '▸'}</i>${esc(u.UserName)}</div><div class="uxa-rs-sub">${sub}</div>${util}</div>`
         + `<div class="uxa-rs-main"><div class="uxa-rs-caps">${caps}</div>${track}</div></div>`;
@@ -4880,6 +4904,7 @@
       + '<input type="search" class="uxa-rs-q" placeholder="Search person, project or client" aria-label="Search person, project or client">'
       + '<span class="uxa-rs-fwrap"><button type="button" class="uxa-rs-b uxa-rs-fbtn" data-act="fopen" title="Filter by me, client, project, project owner, role or status">Filter</button><div class="uxa-rs-fpop" hidden></div></span>'
       + '<select class="uxa-rs-sel" data-sel="sort" aria-label="Sort people" title="Sort people"><option value="name">Sort: Name</option><option value="util">Sort: Most utilized</option><option value="avail">Sort: Most available</option><option value="hours">Sort: Most hours</option></select>'
+      + '<select class="uxa-rs-sel" data-sel="span" aria-label="Weeks shown" title="Weeks shown side by side"><option value="2">2 weeks</option><option value="1">1 week</option></select>'
       + '<label class="uxa-rs-ck"><input type="checkbox" data-opt="plannedOnly">Planned hours only</label>'
       + '<label class="uxa-rs-ck"><input type="checkbox" data-opt="weekends">Weekends</label>'
       + '<label class="uxa-rs-ck" title="Add calendar meetings to today and future days. Workamajig answers this slowly (up to a minute per person), so it fills in gradually."><input type="checkbox" data-opt="meetings">Include meetings</label>'
@@ -4887,7 +4912,8 @@
       + '<div class="uxa-rs-chips" hidden></div></div>'
       + '<div class="uxa-rs-body"></div>';
     root.querySelector('.uxa-rs-q').value = rs.q;
-    root.querySelector('.uxa-rs-sel').value = rs.sort;
+    root.querySelector('.uxa-rs-sel[data-sel="sort"]').value = rs.sort;
+    root.querySelector('.uxa-rs-sel[data-sel="span"]').value = String(rs.span);
     root.querySelectorAll('input[data-opt]').forEach(c => { c.checked = !!rs[c.dataset.opt]; });
     root.addEventListener('click', e => {
       // A bar opens the task's card details right here (the same modal as the board); Cmd/Ctrl-click still opens the
@@ -4909,7 +4935,7 @@
       else if (act === 'prev') rsSetWeek(rsAdd(rs.week, -7));
       else if (act === 'next') rsSetWeek(rsAdd(rs.week, 7));
       else if (act === 'today') rsSetWeek(new Date());
-      else if (act === 'refresh') { const wk = rsIso(rs.week); for (const k of [...rs.data.keys()]) if (k.indexOf(wk + '|') === 0) rs.data.delete(k); rs.gen++; if (rs.staff && rs.staff.length) { rsQueue(); rsDraw(); } else { rs.staff = null; rsDraw(); rsLoadStaff(); } }
+      else if (act === 'refresh') { const wks = rsWeeks().map(w => rsIso(w) + '|'); for (const k of [...rs.data.keys()]) if (wks.some(p => k.indexOf(p) === 0)) rs.data.delete(k); rs.gen++; if (rs.staff && rs.staff.length) { rsQueue(); rsDraw(); } else { rs.staff = null; rsDraw(); rsLoadStaff(); } }
       else if (act === 'toggle') { const k = Number(el.dataset.u); if (rs.collapsed.has(k)) rs.collapsed.delete(k); else rs.collapsed.add(k); rsDraw(); }
     });
     root.addEventListener('input', e => {
@@ -4920,6 +4946,7 @@
       const ds = e.target.dataset || {};
       if (ds.fcat) { const set = rs.f[ds.fcat]; if (e.target.checked) { set.add(ds.fval); rs.fl[ds.fcat + '|' + ds.fval] = ds.flab; } else set.delete(ds.fval); rsDraw(); return; }   // (popover stays as is: keeps its scroll + search)
       if (ds.sel === 'sort') { rs.sort = e.target.value; rsDraw(); return; }
+      if (ds.sel === 'span') { rs.span = e.target.value === '1' ? 1 : 2; rs.gen++; rsQueue(); rsDraw(); return; }
       const o = ds.opt; if (o) { rs[o] = e.target.checked; if (o === 'useFilter') rsQueue(); if (o === 'meetings') rsQueueCal(); rsDraw(); } });
     document.body.appendChild(root);
     document.addEventListener('keydown', rsKey, true);
