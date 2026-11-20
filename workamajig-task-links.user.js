@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.0';
+  const VERSION = '0.99.1';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4484,7 +4484,7 @@
   // follow Workamajig's own model: a past day shows the time logged that day; today onward shows planned hours (each
   // assignment's weekly DisplayHours spread over its remaining active days); capacity is the viewer's Scheduling "max hours" per
   // weekday, exactly what the native staff tiles compare against. READ-ONLY: nothing here writes to Workamajig. The
-  // only thing we add to a native screen is the launcher button on the Scheduling toolbar.
+  // only thing we add to a native screen is the launcher button at the right of the Scheduling header.
   const RS_AID = 'projects.traffic.rm';
   const RS_CLS = 'WJAPP.Modules.Project.ResourceManagement';
   const RS_APP = 'getStaffSchedule_getStaffDetail';
@@ -4612,7 +4612,7 @@
     if (document.getElementById('uxa-rs-style')) return;
     const s = document.createElement('style'); s.id = 'uxa-rs-style';
     const f = '-apple-system,Segoe UI,Roboto,sans-serif';
-    s.textContent = '#uxa-rs-btn{font:13px/1 ' + f + ';cursor:pointer;margin-left:8px;padding:6px 12px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#334;display:inline-flex;align-items:center;gap:6px;vertical-align:middle}'
+    s.textContent = '#uxa-rs-btn{font:13px/1 ' + f + ';cursor:pointer;margin:0 4px 0 8px;padding:8px 14px;border:1px solid #cfd6df;border-radius:8px;background:#fff;color:#334;display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;align-self:center;white-space:nowrap}'
       + '#uxa-rs-btn:hover{border-color:#7ab51d;color:#3f6d12}'
       + '#uxa-rs{position:fixed;inset:0;z-index:99990;background:#fff;color:#243;font:13px/1.3 ' + f + ';display:flex;flex-direction:column}'
       + '#uxa-rs *{box-sizing:border-box}'
@@ -4766,10 +4766,12 @@
     document.removeEventListener('keydown', rsKey, true);
     const root = document.getElementById('uxa-rs'); if (root) root.remove();
   }
-  // The Scheduling board toolbar (it carries the assignments / meetings radio buttons) hosts our launcher.
-  function rsToolbar() {
-    for (const m of document.querySelectorAll('menu.toolbar')) {
-      if ([...m.querySelectorAll('button')].some(b => /^\s*(assignments|meetings)\b/i.test(b.textContent || ''))) return m;
+  // The Scheduling page's own header row (title, week picker, "+" / "…", then a spacer): our launcher sits at its
+  // right-hand end, after the spacer.
+  function rsHeader() {
+    for (const pg of document.querySelectorAll('page.open')) {
+      const h = pg.querySelector(':scope > header');
+      if (h && h.querySelector('hgroup h1')) return h;
     }
     return null;
   }
@@ -4778,18 +4780,17 @@
     let btn = document.getElementById('uxa-rs-btn');
     if (!resourceScheduleOn()) { if (btn) btn.remove(); if (rs.open) rsClose(); return; }
     if (rs.open && !document.getElementById('uxa-rs')) rsClose();   // our view was removed from under us
-    const tb = aid() === RS_AID ? rsToolbar() : null;
+    const tb = aid() === RS_AID ? rsHeader() : null;
     if (!tb) { if (btn) btn.remove(); return; }
     if (btn && tb.contains(btn)) return;
-    if (btn) btn.remove();                                           // re-attach after a native toolbar re-render
+    if (btn) btn.remove();                                           // re-attach after a native header re-render
     ensureRsStyle();
     btn = document.createElement('button'); btn.id = 'uxa-rs-btn'; btn.type = 'button';
     btn.title = 'Open the team’s week as a timeline with capacity';
     btn.innerHTML = RS_ICON + '<span>Resource Schedule</span>';
     btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); rsOpen(); });
-    // Sit with the toolbar's own buttons, ahead of the (long, clipped) filter summary that follows them.
-    const after = [...tb.children].find(c => c.tagName !== 'BUTTON' && c.tagName !== 'PROGRESS');
-    if (after) tb.insertBefore(btn, after); else tb.appendChild(btn);
+    const sp = tb.querySelector(':scope > .spacer');
+    if (sp) sp.insertAdjacentElement('afterend', btn); else tb.appendChild(btn);
   }
 
   function tick() {
