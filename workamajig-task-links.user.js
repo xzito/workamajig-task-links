@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.2';
+  const VERSION = '0.99.3';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4542,7 +4542,10 @@
     data: new Map(),                               // "<weekIso>|<userKey>" -> null (loading) | { tasks, time, err }
     status: new Map(),                             // TaskUserStatusKey -> { color, name }
     maxHours: 8, filterKeys: null,                 // hours/day capacity + the viewer's saved Scheduling "Users" filter
-    q: '', plannedOnly: false, weekends: false, useFilter: true, meetings: false, calBusy: false, collapsed: new Set(), gen: 0, raf: 0
+    q: '', plannedOnly: false, weekends: false, useFilter: true, meetings: false, calBusy: false, sort: 'name',
+    f: { me: false, client: new Set(), project: new Set(), owner: new Set(), role: new Set(), status: new Set() },   // Filter menu picks
+    fl: {}, fmenu: null,                           // fl = labels of picked values (for chips); fmenu = null | 'root' | category
+    collapsed: new Set(), gen: 0, raf: 0
   };
   const rsDate = s => { const m = /(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
   const rsIso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + 'T00:00:00';
@@ -4660,6 +4663,60 @@
       }
     } finally { rs.calBusy = false; }
   }
+  // ---- Filter menu: Me + five pick-lists built from whatever is loaded for the shown week ----
+  // Categories narrow the BARS (AND across categories, OR within one); a person with no matching bar drops out. The
+  // capacity row always keeps the person's full load, so a filtered view never makes someone look free.
+  const RS_FCATS = [['client', 'Client'], ['project', 'Project'], ['owner', 'Project owner'], ['role', 'Role'], ['status', 'Status']];
+  const rsMe = () => Number(window.System && System.user && System.user.userKey) || 0;
+  // An assignment's [value, label] pairs in one category. "Role" is the assignment's Workamajig service; "Project owner"
+  // matches either the account manager or the project manager.
+  function rsFVals(cat, t) {
+    if (cat === 'client') { const v = String(t.CompanyName || '').trim() || 'No client'; return [[v, v]]; }
+    if (cat === 'project') return [[String(t.ProjectKey), (t.ProjectNumber ? t.ProjectNumber + ' · ' : '') + (t.ProjectName || '')]];
+    if (cat === 'owner') return [t.AccountManagerName, t.ProjectManagerName].map(x => String(x || '').trim()).filter((x, i, a) => x && a.indexOf(x) === i).map(x => [x, x]);
+    if (cat === 'role') { const v = String(t.ServiceName || '').trim() || 'No service'; return [[v, v]]; }
+    const st = rs.status.get(t.TaskUserStatusKey); return [[String(t.TaskUserStatusKey || 0), (st && st.name) || 'No status']];
+  }
+  const rsFCount = () => (rs.f.me ? 1 : 0) + RS_FCATS.reduce((a, c) => a + rs.f[c[0]].size, 0);
+  const rsFTasksOn = () => RS_FCATS.some(c => rs.f[c[0]].size);
+  function rsFPass(t) {
+    for (const [c] of RS_FCATS) { const sel = rs.f[c]; if (sel.size && !rsFVals(c, t).some(x => sel.has(x[0]))) return false; }
+    return true;
+  }
+  function rsFOptions(cat) {
+    const wk = rsIso(rs.week), m = new Map();
+    for (const u of rsPeople()) {
+      const rec = rs.data.get(wk + '|' + u.UserKey); if (!rec) continue;
+      for (const t of rec.tasks) for (const [v, l] of rsFVals(cat, t)) { const o = m.get(v) || { v, l, n: 0 }; o.n++; m.set(v, o); }
+    }
+    rs.f[cat].forEach(v => { if (!m.has(v)) m.set(v, { v, l: rs.fl[cat + '|' + v] || v, n: 0 }); });   // keep picks visible in other weeks
+    return [...m.values()].sort((a, b) => a.l.localeCompare(b.l));
+  }
+  // The Filter button's count + the row of removable chips.
+  function rsDrawChips() {
+    const root = document.getElementById('uxa-rs'); if (!root) return;
+    const n = rsFCount(), fb = root.querySelector('.uxa-rs-fbtn');
+    fb.innerHTML = 'Filter' + (n ? ' <b>' + n + '</b>' : ''); fb.classList.toggle('on', !!n);
+    let ch = rs.f.me ? '<span class="uxa-rs-chip">Me<button type="button" data-act="fme" title="Remove">×</button></span>' : '';
+    for (const [c, lab] of RS_FCATS) rs.f[c].forEach(v => { ch += `<span class="uxa-rs-chip">${esc(lab)}: ${esc(rs.fl[c + '|' + v] || v)}<button type="button" data-act="fdel" data-cat="${c}" data-val="${esc(v)}" title="Remove">×</button></span>`; });
+    if (ch) ch += '<button type="button" class="uxa-rs-clr" data-act="fclear">Clear all</button>';
+    const box = root.querySelector('.uxa-rs-chips'); box.innerHTML = ch; box.hidden = !ch;
+  }
+  // The Filter popover: the category list, or one category's pick-list.
+  function rsDrawPop() {
+    const root = document.getElementById('uxa-rs'); if (!root) return;
+    const pop = root.querySelector('.uxa-rs-fpop'); pop.hidden = !rs.fmenu; if (!rs.fmenu) { pop.innerHTML = ''; return; }
+    if (rs.fmenu === 'root') {
+      pop.innerHTML = `<button type="button" class="uxa-rs-fi${rs.f.me ? ' sel' : ''}" data-act="fme"><span>Me</span><em>${rs.f.me ? '✓' : ''}</em></button><hr>`
+        + RS_FCATS.map(([c, lab]) => `<button type="button" class="uxa-rs-fi" data-act="fcat" data-cat="${c}"><span>${lab}</span><em>${rs.f[c].size || ''} ›</em></button>`).join('');
+      return;
+    }
+    const cat = rs.fmenu, lab = (RS_FCATS.find(c => c[0] === cat) || [])[1] || '', opts = rsFOptions(cat);
+    pop.innerHTML = `<button type="button" class="uxa-rs-fi uxa-rs-fback" data-act="fback"><span>‹ ${lab}</span></button>`
+      + (opts.length > 8 ? '<input type="search" class="uxa-rs-fq" placeholder="Search" aria-label="Search options">' : '')
+      + '<div class="uxa-rs-fopts">' + (opts.length ? opts.map(o => `<label class="uxa-rs-fo"><input type="checkbox" data-fcat="${cat}" data-fval="${esc(o.v)}" data-flab="${esc(o.l)}"${rs.f[cat].has(o.v) ? ' checked' : ''}><span>${esc(o.l)}</span><em>${o.n || ''}</em></label>`).join('') : '<div class="uxa-rs-msg">Nothing loaded for this week yet.</div>') + '</div>';
+    const fq = pop.querySelector('.uxa-rs-fq'); if (fq) fq.focus();
+  }
   // The people shown: everyone on the roster, or just the viewer's saved Scheduling "Users" filter when that's on.
   function rsPeople() { return (rs.staff || []).filter(u => !rs.useFilter || !rs.filterKeys || rs.filterKeys.has(u.UserKey)); }
   function rsDrawSoon() { if (rs.raf) return; rs.raf = setTimeout(() => { rs.raf = 0; rsDraw(); }, 60); }   // (a timer, not rAF: rAF stalls in a background tab)
@@ -4681,6 +4738,22 @@
       + '.uxa-rs-ck{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;color:#445}.uxa-rs-ck[hidden]{display:none}'
       + '#uxa-rs .uxa-rs-ck input{appearance:auto;-webkit-appearance:checkbox;opacity:1;position:static;display:inline-block;width:14px;height:14px;margin:0;accent-color:#7ab51d}'
       + '.uxa-rs-sp{flex:1 1 auto}'
+      + '.uxa-rs-bar2{flex:0 0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:8px 18px;border-bottom:1px solid #e3e6ea;background:#fafbfc}'
+      + '.uxa-rs-fwrap{position:relative}'
+      + '.uxa-rs-fbtn.on{border-color:#7ab51d;color:#3f6d12;background:#eef6e6}.uxa-rs-fbtn b{display:inline-block;min-width:16px;padding:1px 4px;margin-left:3px;border-radius:8px;background:#7ab51d;color:#fff;font-size:11px;text-align:center}'
+      + '.uxa-rs-fpop{position:absolute;left:0;top:calc(100% + 6px);z-index:6;width:300px;max-height:420px;display:flex;flex-direction:column;background:#fff;border:1px solid #d5dbe3;border-radius:10px;box-shadow:0 10px 30px rgba(20,30,50,.18);padding:6px}.uxa-rs-fpop[hidden]{display:none}'
+      + '.uxa-rs-fpop hr{border:0;border-top:1px solid #eef0f3;margin:4px 0}'
+      + '.uxa-rs-fi{display:flex;align-items:center;width:100%;font:inherit;text-align:left;padding:8px 10px;border:0;border-radius:6px;background:none;color:#243;cursor:pointer}.uxa-rs-fi:hover{background:#f2f5f8}.uxa-rs-fi span{flex:1 1 auto}.uxa-rs-fi em{font-style:normal;color:#7a8594;font-size:12px}.uxa-rs-fi.sel em{color:#3f6d12;font-weight:700}'
+      + '.uxa-rs-fback{font-weight:600}'
+      + '.uxa-rs-fq{font:inherit;margin:4px 4px 6px;padding:6px 9px;border:1px solid #cfd6df;border-radius:7px}'
+      + '.uxa-rs-fopts{overflow:auto;min-height:0}'
+      + '.uxa-rs-fo{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;cursor:pointer}.uxa-rs-fo:hover{background:#f2f5f8}.uxa-rs-fo span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.uxa-rs-fo em{font-style:normal;color:#9aa1ab;font-size:11px}'
+      + '#uxa-rs .uxa-rs-fo input{appearance:auto;-webkit-appearance:checkbox;opacity:1;position:static;display:inline-block;width:14px;height:14px;margin:0;flex:0 0 auto;accent-color:#7ab51d}'
+      + '.uxa-rs-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.uxa-rs-chips[hidden]{display:none}'
+      + '.uxa-rs-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 9px;border:1px solid #cfe3b4;border-radius:999px;background:#eef6e6;color:#3f6d12;font-size:12px;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+      + '.uxa-rs-chip button{font:inherit;border:0;background:none;color:#3f6d12;cursor:pointer;padding:0 5px;font-size:14px;line-height:1}'
+      + '.uxa-rs-clr{font:inherit;font-size:12px;border:0;background:none;color:#2b6cb0;cursor:pointer;text-decoration:underline}'
+      + '#uxa-rs .uxa-rs-sel{font:inherit;display:inline-block;width:auto;flex:0 0 auto;height:auto;margin:0;padding:5px 8px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#334;appearance:auto;-webkit-appearance:menulist}'
       + '.uxa-rs-note{font-size:14px;color:#8a93a0;cursor:help;white-space:nowrap}'
       + '.uxa-rs-body{flex:1 1 auto;overflow:auto}'
       + '.uxa-rs-head{display:flex;position:sticky;top:0;z-index:3;background:#fff;border-bottom:1px solid #e3e6ea}'
@@ -4731,14 +4804,22 @@
     let html = '<div class="uxa-rs-head"><div class="uxa-rs-who"></div><div class="uxa-rs-days">'
       + days.map(d => `<div class="uxa-rs-dh${dcls(d)}">${esc(d.toLocaleDateString('en-US', { weekday: 'short' }))} <b>${d.getDate()}</b></div>`).join('') + '</div></div>';
     const cols = days.map((d, i) => `<div class="uxa-rs-col${dcls(d)}" style="left:${(i / n * 100).toFixed(4)}%;width:${(100 / n).toFixed(4)}%"></div>`).join('');
-    const q = rs.q; let shown = 0;
-    for (const u of rsPeople()) {
-      const rec = rs.data.get(wk + '|' + u.UserKey);
+    const q = rs.q, fOn = rsFTasksOn(), me = rs.f.me ? rsMe() : 0; let shown = 0;
+    rsDrawChips();
+    // People in the chosen order; anyone still loading sorts last (by name) until their week arrives.
+    const ppl = rsPeople().map(u => { const rec = rs.data.get(wk + '|' + u.UserKey); let tot = 0, cap = 0; if (rec) rsUserDays(rec, all).forEach(x => { tot += x.hrs; cap += x.cap; }); return { u, rec, tot, cap }; });
+    if (rs.sort !== 'name') {
+      const val = x => rs.sort === 'util' ? (x.cap ? x.tot / x.cap : (x.tot ? 99 : 0)) : (rs.sort === 'avail' ? x.cap - x.tot : x.tot);
+      ppl.sort((a, b) => (!a.rec - !b.rec) || (val(b) - val(a)) || String(a.u.UserName).localeCompare(String(b.u.UserName)));
+    }
+    for (const { u, rec } of ppl) {
+      if (me && u.UserKey !== me) continue;
       const nameHit = !q || String(u.UserName).toLowerCase().indexOf(q) >= 0;
       let tasks = [];
       if (rec) {
         for (const t of rec.tasks) {
           if (rs.plannedOnly && !(+t.DisplayHours > 0)) continue;
+          if (fOn && !rsFPass(t)) continue;
           if (q && !nameHit && [t.ProjectNumber, t.ProjectName, t.TaskName, t.CompanyName].join(' ').toLowerCase().indexOf(q) < 0) continue;
           let first = -1, last = -1;
           days.forEach((d, i) => { if (rsActive(t, d)) { if (first < 0) first = i; last = i; } });
@@ -4747,7 +4828,7 @@
         // work with hours left this week first, then by where it starts on the timeline
         tasks.sort((a, b) => ((+b.t.DisplayHours > 0) - (+a.t.DisplayHours > 0)) || (a.first - b.first) || (b.last - a.last));
       }
-      if (q && !nameHit && !tasks.length) continue;
+      if ((q && !nameHit && !tasks.length) || (fOn && rec && !tasks.length)) continue;
       shown++;
       const open = !rs.collapsed.has(u.UserKey);
       let sub = 'Loading…', util = '', caps = days.map(() => '<div class="uxa-rs-cap off">·</div>').join('');
@@ -4757,6 +4838,7 @@
         const lv = rsLevel(tot, cap), colr = lv === 'over' ? '#e53e3e' : (lv === 'warn' ? '#dd8800' : '#38a169');
         util = `<div class="uxa-rs-util"><span style="width:${Math.min(100, cap ? tot / cap * 100 : (tot ? 100 : 0)).toFixed(1)}%;background:${colr}"></span></div>`;
         caps = wd.slice(0, n).map(x => `<div class="uxa-rs-cap ${rsLevel(x.hrs, x.cap)}${x.logged ? ' lg' : ''}" title="${x.logged ? 'Time logged' : 'Planned hours' + (x.mt ? ' + ' + rsNum(x.mt) + ' h meetings' : '')}: ${rsNum(x.hrs)} h · capacity ${rsNum(x.cap)} h">${rsNum(x.hrs)} <small>/ ${rsNum(x.cap)}</small></div>`).join('');
+        if (fOn) sub += ' · ' + rsNum(tasks.reduce((a, x) => a + (+x.t.DisplayHours || 0), 0)) + ' h in filter';
         if (rs.meetings && !Array.isArray(rec.cal)) sub += ' · meetings loading…';
         if (rec.err) sub = 'Couldn’t load — try Refresh';
       }
@@ -4771,17 +4853,17 @@
             + '\nPlanned ' + rsNum(+t.Hours || 0) + ' h · logged ' + rsNum(+t.ActualHours || 0) + ' h · ' + (+t.PercComp || 0) + '% complete' + (dh ? '\n' + rsNum(dh) + ' h allocated this week' : '');
           bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}" data-pk="${Number(t.ProjectKey) || 0}" data-task="${Number(t.TaskKey) || 0}" data-tuk="${Number(t.TaskUserKey) || 0}" data-u="${u.UserKey}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * (RS_BAR + RS_GAP) + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}"><span>${esc(lbl)}</span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}</a>`;
         });
-        track = rec && !tasks.length ? '<div class="uxa-rs-msg">No assignments' + (q || rs.plannedOnly ? ' match' : ' this week') + '</div>'
+        track = rec && !tasks.length ? '<div class="uxa-rs-msg">No assignments' + (q || rs.plannedOnly || fOn ? ' match' : ' this week') + '</div>'
           : `<div class="uxa-rs-track" style="height:${Math.max(tasks.length, 1) * (RS_BAR + RS_GAP) + RS_GAP}px">${cols}${bars}</div>`;
       }
       html += `<div class="uxa-rs-lane"><div class="uxa-rs-who" data-act="toggle" data-u="${u.UserKey}"><div class="uxa-rs-name"><i>${open ? '▾' : '▸'}</i>${esc(u.UserName)}</div><div class="uxa-rs-sub">${sub}</div>${util}</div>`
         + `<div class="uxa-rs-main"><div class="uxa-rs-caps">${caps}</div>${track}</div></div>`;
     }
-    if (!shown) html += '<div class="uxa-rs-empty">Nobody matches “' + esc(q) + '”.</div>';
+    if (!shown) html += '<div class="uxa-rs-empty">Nobody matches the current search and filters.</div>';
     body.innerHTML = html;
   }
   function rsSetWeek(d) { rs.week = rsMonday(d); rs.gen++; rsQueue(); rsDraw(); }
-  function rsKey(e) { if (e.key === 'Escape' && rs.open) { e.stopPropagation(); rsClose(); } }
+  function rsKey(e) { if (e.key === 'Escape' && rs.open) { e.stopPropagation(); if (rs.fmenu) { rs.fmenu = null; rsDrawPop(); } else rsClose(); } }
   function rsOpen() {
     if (rs.open) return;
     ensureRsStyle();
@@ -4791,25 +4873,38 @@
     root.innerHTML = '<div class="uxa-rs-top"><span class="uxa-rs-title">Resource Schedule</span>'
       + '<button type="button" class="uxa-rs-b" data-act="prev" title="Previous week">‹</button><button type="button" class="uxa-rs-b" data-act="today">This week</button><button type="button" class="uxa-rs-b" data-act="next" title="Next week">›</button>'
       + '<span class="uxa-rs-week"></span>'
+      + '<span class="uxa-rs-sp"></span><span class="uxa-rs-note" title="Each day shows hours against capacity (your Scheduling max hours per weekday). Past days show the time logged that day; today onward shows planned hours per day, the same way Workamajig’s staff tiles count them.">ⓘ</span>'
+      + '<button type="button" class="uxa-rs-b uxa-rs-all" data-act="all" title="Collapse or expand every person\'s assignments">Collapse all</button>'
+      + '<button type="button" class="uxa-rs-b" data-act="refresh" title="Reload this week">Refresh</button><button type="button" class="uxa-rs-b" data-act="close" title="Close (Esc)">✕ Close</button></div>'
+      + '<div class="uxa-rs-bar2">'
       + '<input type="search" class="uxa-rs-q" placeholder="Search person, project or client" aria-label="Search person, project or client">'
+      + '<span class="uxa-rs-fwrap"><button type="button" class="uxa-rs-b uxa-rs-fbtn" data-act="fopen" title="Filter by me, client, project, project owner, role or status">Filter</button><div class="uxa-rs-fpop" hidden></div></span>'
+      + '<select class="uxa-rs-sel" data-sel="sort" aria-label="Sort people" title="Sort people"><option value="name">Sort: Name</option><option value="util">Sort: Most utilized</option><option value="avail">Sort: Most available</option><option value="hours">Sort: Most hours</option></select>'
       + '<label class="uxa-rs-ck"><input type="checkbox" data-opt="plannedOnly">Planned hours only</label>'
       + '<label class="uxa-rs-ck"><input type="checkbox" data-opt="weekends">Weekends</label>'
       + '<label class="uxa-rs-ck" title="Add calendar meetings to today and future days. Workamajig answers this slowly (up to a minute per person), so it fills in gradually."><input type="checkbox" data-opt="meetings">Include meetings</label>'
       + '<label class="uxa-rs-ck uxa-rs-filter" title="Show only the people in your saved Scheduling Users filter"' + (rs.filterKeys ? '' : ' hidden') + '><input type="checkbox" data-opt="useFilter">My Scheduling filter</label>'
-      + '<span class="uxa-rs-sp"></span><span class="uxa-rs-note" title="Each day shows hours against capacity (your Scheduling max hours per weekday). Past days show the time logged that day; today onward shows planned hours per day, the same way Workamajig’s staff tiles count them.">ⓘ</span>'
-      + '<button type="button" class="uxa-rs-b uxa-rs-all" data-act="all" title="Collapse or expand every person\'s assignments">Collapse all</button>'
-      + '<button type="button" class="uxa-rs-b" data-act="refresh" title="Reload this week">Refresh</button><button type="button" class="uxa-rs-b" data-act="close" title="Close (Esc)">✕ Close</button></div>'
+      + '<div class="uxa-rs-chips" hidden></div></div>'
       + '<div class="uxa-rs-body"></div>';
     root.querySelector('.uxa-rs-q').value = rs.q;
+    root.querySelector('.uxa-rs-sel').value = rs.sort;
     root.querySelectorAll('input[data-opt]').forEach(c => { c.checked = !!rs[c.dataset.opt]; });
     root.addEventListener('click', e => {
       // A bar opens the task's card details right here (the same modal as the board); Cmd/Ctrl-click still opens the
       // assignment in a new tab.
       const bar = e.target.closest('.uxa-rs-bar');
       if (bar) { if (plainClick(e) && Number(bar.dataset.pk) > 0 && Number(bar.dataset.task) > 0) { e.preventDefault(); openTaskModalDetached(bar.dataset.pk, bar.dataset.task, bar.dataset.tuk, bar.dataset.u); } return; }
-      const el = e.target.closest('[data-act]'); if (!el) return;
+      const el = e.target.closest('[data-act]');
+      if (rs.fmenu && !e.target.closest('.uxa-rs-fwrap')) { rs.fmenu = null; rsDrawPop(); }   // click outside closes the menu
+      if (!el) return;
       const act = el.dataset.act;
       if (act === 'close') rsClose();
+      else if (act === 'fopen') { rs.fmenu = rs.fmenu ? null : 'root'; rsDrawPop(); }
+      else if (act === 'fcat') { rs.fmenu = el.dataset.cat; rsDrawPop(); }
+      else if (act === 'fback') { rs.fmenu = 'root'; rsDrawPop(); }
+      else if (act === 'fme') { rs.f.me = !rs.f.me; rsDrawPop(); rsDraw(); }
+      else if (act === 'fdel') { rs.f[el.dataset.cat].delete(el.dataset.val); rsDrawPop(); rsDraw(); }
+      else if (act === 'fclear') { rs.f.me = false; RS_FCATS.forEach(c => rs.f[c[0]].clear()); rsDrawPop(); rsDraw(); }
       else if (act === 'all') { const ppl = rsPeople(), anyOpen = ppl.some(u => !rs.collapsed.has(u.UserKey)); ppl.forEach(u => { if (anyOpen) rs.collapsed.add(u.UserKey); else rs.collapsed.delete(u.UserKey); }); rsDraw(); }
       else if (act === 'prev') rsSetWeek(rsAdd(rs.week, -7));
       else if (act === 'next') rsSetWeek(rsAdd(rs.week, 7));
@@ -4817,8 +4912,15 @@
       else if (act === 'refresh') { const wk = rsIso(rs.week); for (const k of [...rs.data.keys()]) if (k.indexOf(wk + '|') === 0) rs.data.delete(k); rs.gen++; if (rs.staff && rs.staff.length) { rsQueue(); rsDraw(); } else { rs.staff = null; rsDraw(); rsLoadStaff(); } }
       else if (act === 'toggle') { const k = Number(el.dataset.u); if (rs.collapsed.has(k)) rs.collapsed.delete(k); else rs.collapsed.add(k); rsDraw(); }
     });
-    root.addEventListener('input', e => { if (e.target.classList.contains('uxa-rs-q')) { rs.q = e.target.value.trim().toLowerCase(); rsDraw(); } });
-    root.addEventListener('change', e => { const o = e.target.dataset && e.target.dataset.opt; if (o) { rs[o] = e.target.checked; if (o === 'useFilter') rsQueue(); if (o === 'meetings') rsQueueCal(); rsDraw(); } });
+    root.addEventListener('input', e => {
+      if (e.target.classList.contains('uxa-rs-q')) { rs.q = e.target.value.trim().toLowerCase(); rsDraw(); }
+      else if (e.target.classList.contains('uxa-rs-fq')) { const v = e.target.value.trim().toLowerCase(); root.querySelectorAll('.uxa-rs-fo').forEach(l => { l.style.display = !v || l.textContent.toLowerCase().indexOf(v) >= 0 ? '' : 'none'; }); }
+    });
+    root.addEventListener('change', e => {
+      const ds = e.target.dataset || {};
+      if (ds.fcat) { const set = rs.f[ds.fcat]; if (e.target.checked) { set.add(ds.fval); rs.fl[ds.fcat + '|' + ds.fval] = ds.flab; } else set.delete(ds.fval); rsDraw(); return; }   // (popover stays as is: keeps its scroll + search)
+      if (ds.sel === 'sort') { rs.sort = e.target.value; rsDraw(); return; }
+      const o = ds.opt; if (o) { rs[o] = e.target.checked; if (o === 'useFilter') rsQueue(); if (o === 'meetings') rsQueueCal(); rsDraw(); } });
     document.body.appendChild(root);
     document.addEventListener('keydown', rsKey, true);
     rsDraw();
