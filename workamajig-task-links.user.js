@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.5';
+  const VERSION = '0.99.6';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -1668,10 +1668,10 @@
   }
   // Assign a person to a task for a date span and a number of hours. task = { taskKey } for an existing task, or
   // { name } to create a new top-level task first. The inserted taskUser row mirrors the one Workamajig's own
-  // assignment panel sends (TaskUserKey -1, the default status, APlanStart/APlanComplete, and the user's key in
+  // assignment panel sends (TaskUserKey -1, the default status unless statusKey names another, APlanStart/APlanComplete, and the user's key in
   // addedAssignments so they join the project team). Workamajig's UI refuses assignment dates outside the task's own
   // dates but its server does not, so we widen the task's span to contain the assignment (never shrink it).
-  async function addAssignment(projectKey, task, userKey, userName, hours, startYmd, endYmd) {
+  async function addAssignment(projectKey, task, userKey, userName, hours, startYmd, endYmd, statusKey) {
     projectKey = Number(projectKey); userKey = Number(userKey); hours = Number(hours);
     if (!(projectKey > 0)) throw new Error('pick a project');
     if (!(userKey > 0)) throw new Error('no person selected');
@@ -1696,7 +1696,8 @@
     const t = (sched.tasks || []).find(x => x.TaskKey === taskKey);
     if (!t) throw new Error('that task no longer exists; reload');
     if ((sched.projectTaskUserData || []).some(x => x.TaskKey === taskKey && x.UserKey === userKey)) throw new Error((userName || 'This person') + ' is already assigned to that task');
-    const sts = sched.taskUserStatus || [], st = sts.find(x => x.IsDefault) || sts[0] || {};
+    const sts = sched.taskUserStatus || [], st = (Number(statusKey) > 0 && sts.find(x => x.k === Number(statusKey))) || sts.find(x => x.IsDefault) || sts[0] || {};
+    const pct = statusDefaultPct(st.l);   // a status other than the default starts at that status's own % complete
     const u = (sched.users || []).find(x => x.UserKey === userKey) || {};
     const name = u.UserName || userName || '';
     const tasksUpd = [], ts = String(t.PlanStart || '').slice(0, 10), te = String(t.PlanComplete || '').slice(0, 10);
@@ -1704,7 +1705,7 @@
     if (ns !== ts || ne !== te) { schedSetTaskSpan(t, ns, ne); tasksUpd.push(t); }
     const row = {
       TaskUserKey: -1, TaskKey: taskKey, TaskUserStatusKey: st.k, StatusName: st.l || '', ServiceKey: 0, ServiceDescription: '',
-      ActualHours: 0, UserKey: userKey, UserName: name, PercComp: 0, ProjectKey: projectKey, _idx: 0,
+      ActualHours: 0, UserKey: userKey, UserName: name, PercComp: pct == null ? 0 : pct, ProjectKey: projectKey, _idx: 0,
       Initials: u.Initials || name.split(/\s+/).map(w => w[0] || '').join('').toUpperCase(), batch: 0, ConflictChanged: 0, BlockoutConflict: 0,
       Hours: hours, ManualAdjustment: 0, APlanStart: startYmd + 'T00:00:00', APlanComplete: endYmd + 'T00:00:00', ActStart: ''
     };
@@ -4906,6 +4907,9 @@
       + '.uxa-rs-dlg label{display:block;font-size:12px;color:#667;margin:0 0 12px}'
       + '#uxa-rs .uxa-rs-dlg input,#uxa-rs .uxa-rs-dlg select{display:block;width:100%;height:auto;margin:4px 0 0;font:inherit;font-size:13px;color:#243;padding:7px 9px;border:1px solid #cfd6df;border-radius:7px;background:#fff;appearance:auto;-webkit-appearance:auto;opacity:1;position:static}'
       + '.uxa-rs-frow{display:flex;gap:10px}.uxa-rs-frow label{flex:1 1 0}'
+      + '#uxa-rs .uxa-rs-dlg select.uxa-rs-plist{height:150px;padding:4px;overflow:auto}.uxa-rs-plist optgroup{font-weight:700;color:#445;font-style:normal}.uxa-rs-plist option{font-weight:400;color:#243;padding:3px 6px}'
+      + '.uxa-rs-dsum{margin:-4px 0 12px;font-size:12px;color:#3f6d12;font-weight:600}'
+      + '.uxa-rs-sel-box{position:absolute;top:2px;bottom:2px;border-radius:5px;background:rgba(122,181,29,.22);box-shadow:inset 0 0 0 1.5px #7ab51d;pointer-events:none;z-index:1}'
       + '.uxa-rs-newtask[hidden],.uxa-rs-dmsg[hidden]{display:none}'
       + '.uxa-rs-dmsg{margin:0 0 12px;padding:8px 10px;border-radius:7px;background:#fdecec;color:#a12222;font-size:12px}.uxa-rs-dmsg.info{background:#eef3f8;color:#445}'
       + '.uxa-rs-dbtns{display:flex;gap:8px}.uxa-rs-primary{background:#5d8f12;border-color:#5d8f12;color:#fff;font-weight:600}.uxa-rs-primary:hover{background:#4f7a0f;border-color:#4f7a0f}.uxa-rs-b[disabled]{opacity:.55;cursor:default}'
@@ -5009,61 +5013,107 @@
   // ---- allocate: click a blank day in someone's lane to assign them to a task ----
   // Workamajig has no free-standing "allocation": hours always live on an assignment to a task in a project. So the
   // form asks for a project (any that appears in the weeks loaded so far) and a task on it (an open one, or a new one).
-  function rsAllocProjects() {
+  function rsAllocProjects() {   // [{ client, items: [{ k, l }] }] sorted by client then project
     const m = new Map();
-    rs.data.forEach(rec => { if (rec) for (const t of rec.tasks) if (Number(t.ProjectKey) > 0 && !m.has(t.ProjectKey)) m.set(t.ProjectKey, (t.ProjectNumber ? t.ProjectNumber + ' · ' : '') + (t.ProjectName || '')); });
-    return [...m.entries()].map(([k, l]) => ({ k, l })).sort((a, b) => a.l.localeCompare(b.l));
+    rs.data.forEach(rec => { if (rec) for (const t of rec.tasks) if (Number(t.ProjectKey) > 0 && !m.has(t.ProjectKey)) m.set(t.ProjectKey, { k: t.ProjectKey, l: (t.ProjectNumber ? t.ProjectNumber + ' · ' : '') + (t.ProjectName || ''), c: String(t.CompanyName || '').trim() || 'No client' }); });
+    const by = new Map();
+    [...m.values()].sort((x, y) => x.l.localeCompare(y.l)).forEach(o => { if (!by.has(o.c)) by.set(o.c, []); by.get(o.c).push(o); });
+    return [...by.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([client, items]) => ({ client, items }));
   }
   function rsAllocClose() { rs.alloc = null; const d = document.querySelector('#uxa-rs .uxa-rs-dlgbg'); if (d) d.remove(); }
-  function rsAllocOpen(u, ymd) {
+  function rsAllocOpen(u, startYmd, endYmd) {
     const root = document.getElementById('uxa-rs'); if (!root || !rsCanAlloc()) return;
     rsAllocClose();
     rs.alloc = { userKey: u.UserKey, userName: u.UserName, busy: false };
     const d = document.createElement('div'); d.className = 'uxa-rs-dlgbg';
     d.innerHTML = `<div class="uxa-rs-dlg" role="dialog" aria-modal="true"><h3>Allocate ${esc(u.UserName)}</h3>`
-      + `<div class="uxa-rs-frow"><label>Start<input type="date" data-al="start" value="${ymd}"></label><label>End<input type="date" data-al="end" value="${ymd}"></label><label>Total hours<input type="number" data-al="hours" min="0" step="0.25" value="1"></label></div>`
-      + `<label>Project<select data-al="pk"><option value="">Choose a project…</option>${rsAllocProjects().map(o => `<option value="${o.k}">${esc(o.l)}</option>`).join('')}</select></label>`
-      + '<label>Task<select data-al="task" disabled><option value="">Choose a project first</option></select></label>'
+      + `<div class="uxa-rs-frow"><label>Start<input type="date" data-al="start" value="${startYmd}"></label><label>End<input type="date" data-al="end" value="${endYmd || startYmd}"></label></div>`
+      + '<div class="uxa-rs-frow"><label>Hours<select data-al="mode"><option value="day">Hours per day</option><option value="total">Total hours</option></select></label>'
+      + '<label>&nbsp;<input type="number" data-al="hours" min="0" step="0.25" value="1" aria-label="Hours"></label></div>'
+      + '<div class="uxa-rs-dsum"></div>'
+      + '<label>Project<input type="search" class="uxa-rs-pq" placeholder="Search projects or clients" aria-label="Search projects or clients">'
+      + `<select data-al="pk" size="7" class="uxa-rs-plist">${rsAllocProjects().map(g => `<optgroup label="${esc(g.client)}">${g.items.map(o => `<option value="${o.k}">${esc(o.l)}</option>`).join('')}</optgroup>`).join('')}</select></label>`
+      + '<div class="uxa-rs-frow"><label style="flex:2 1 0">Task<select data-al="task" disabled><option value="">Choose a project first</option></select></label>'
+      + '<label>Status<select data-al="status" disabled><option value="">Project default</option></select></label></div>'
       + '<label class="uxa-rs-newtask" hidden>New task name<input type="text" data-al="name" maxlength="200" placeholder="e.g. Planning"></label>'
       + '<div class="uxa-rs-dmsg" hidden></div>'
       + '<div class="uxa-rs-dbtns"><button type="button" class="uxa-rs-b uxa-rs-primary" data-act="allocSave">Create assignment</button><button type="button" class="uxa-rs-b" data-act="allocCancel">Cancel</button></div>'
-      + '<p class="uxa-rs-dnote">This creates a real assignment in Workamajig, in the project\u2019s default status. If the dates fall outside the task\u2019s own dates, the task is extended to fit. The project list shows projects that appear in the weeks loaded so far.</p></div>';
+      + '<p class="uxa-rs-dnote">This creates a real assignment in Workamajig. If the dates fall outside the task’s own dates, the task is extended to fit. The project list shows projects that appear in the weeks loaded so far.</p></div>';
     root.appendChild(d);
-    d.querySelector('[data-al="pk"]').focus();
+    rsAllocSum();
+    d.querySelector('.uxa-rs-pq').focus();
   }
-  // Fill the Task pick-list for the chosen project: its open leaf tasks, plus "New task…".
+  // The total this form will book: hours per day × working days (Mon–Fri) in the span, or the total as typed.
+  function rsAllocTotal() {
+    const root = document.getElementById('uxa-rs'), v = k => { const el = root && root.querySelector('[data-al="' + k + '"]'); return el ? String(el.value || '').trim() : ''; };
+    const s = v('start'), e = v('end'), h = v('hours'), ok = /^\d{4}-\d{2}-\d{2}$/.test(s) && /^\d{4}-\d{2}-\d{2}$/.test(e) && e >= s;
+    const days = ok ? schedWorkDays(s, e) : 0, num = h !== '' && isFinite(Number(h)) && Number(h) >= 0 ? Number(h) : null;
+    return { ok, days, perDay: v('mode') !== 'total', num, total: num == null ? null : (v('mode') !== 'total' ? num * days : num) };
+  }
+  function rsAllocSum() {
+    const el = document.querySelector('#uxa-rs .uxa-rs-dsum'); if (!el) return;
+    const t = rsAllocTotal();
+    if (!t.ok) { el.textContent = 'Pick a start date and an end date on or after it.'; return; }
+    const d = t.days + (t.days === 1 ? ' working day' : ' working days');
+    el.textContent = t.total == null ? d : d + ' · ' + (t.perDay ? rsNum(t.total) + ' h total' : rsNum(t.days ? t.total / t.days : 0) + ' h per day');
+  }
+  // Fill the Task and Status pick-lists for the chosen project: its open leaf tasks plus "New task…", and its statuses.
   async function rsAllocTasks(pk) {
     const root = document.getElementById('uxa-rs'), sel = root && root.querySelector('[data-al="task"]'); if (!sel) return;
-    const newBox = root.querySelector('.uxa-rs-newtask'); newBox.hidden = true;
+    const stSel = root.querySelector('[data-al="status"]'), newBox = root.querySelector('.uxa-rs-newtask'); newBox.hidden = true;
+    stSel.disabled = true; stSel.innerHTML = '<option value="">Project default</option>';
     if (!(Number(pk) > 0)) { sel.disabled = true; sel.innerHTML = '<option value="">Choose a project first</option>'; return; }
     sel.disabled = true; sel.innerHTML = '<option value="">Loading tasks…</option>';
-    let tasks = [];
-    try { tasks = (await schedRead(Number(pk))).tasks || []; } catch (e) { tasks = null; }
+    let sched = null;
+    try { sched = await schedRead(Number(pk)); } catch (e) {}
     const cur = root.querySelector('[data-al="pk"]'); if (!rs.alloc || !cur || cur.value !== String(pk)) return;   // changed meanwhile
-    if (!tasks) { sel.innerHTML = '<option value="">Could not load this project\u2019s tasks</option>'; return; }
-    const parents = new Set(tasks.map(t => t.SummaryTaskKey).filter(Boolean));
+    if (!sched) { sel.innerHTML = '<option value="">Could not load this project’s tasks</option>'; return; }
+    const tasks = sched.tasks || [], parents = new Set(tasks.map(t => t.SummaryTaskKey).filter(Boolean));
     const open = tasks.filter(t => !parents.has(t.TaskKey) && !(+t.PercComp >= 100));
-    sel.innerHTML = '<option value="">Choose a task…</option><option value="new">\uff0b New task…</option>'
+    sel.innerHTML = '<option value="">Choose a task…</option><option value="new">＋ New task…</option>'
       + open.map(t => `<option value="${t.TaskKey}">${esc((t.TaskID ? t.TaskID + '  ' : '') + (t.TaskName || ''))}</option>`).join('');
     sel.disabled = false;
+    const sts = sched.taskUserStatus || [];
+    if (sts.length) { stSel.innerHTML = sts.map(x => `<option value="${x.k}"${x.IsDefault ? ' selected' : ''}>${esc(x.l || '')}</option>`).join(''); stSel.disabled = false; }
   }
   async function rsAllocSave() {
     const root = document.getElementById('uxa-rs'), a = rs.alloc; if (!root || !a || a.busy) return;
     const v = k => { const el = root.querySelector('[data-al="' + k + '"]'); return el ? String(el.value || '').trim() : ''; };
     const msg = root.querySelector('.uxa-rs-dmsg'), say = (t, info) => { msg.textContent = t; msg.hidden = !t; msg.classList.toggle('info', !!info); };
-    const taskVal = v('task'), hours = v('hours');
+    const taskVal = v('task'), tot = rsAllocTotal();
+    if (!tot.ok) { say('Pick a start date and an end date on or after it.'); return; }
+    if (tot.total == null) { say('Enter the hours (0 or more).'); return; }
     if (!v('pk')) { say('Pick a project.'); return; }
     if (!taskVal) { say('Pick a task, or choose New task.'); return; }
     if (taskVal === 'new' && !v('name')) { say('Enter a name for the new task.'); return; }
-    if (hours === '' || !isFinite(Number(hours)) || Number(hours) < 0) { say('Enter the total hours (0 or more).'); return; }
     a.busy = true; root.querySelectorAll('.uxa-rs-dbtns button').forEach(b => { b.disabled = true; }); say('Saving to Workamajig…', true);
     try {
-      await addAssignment(v('pk'), taskVal === 'new' ? { name: v('name') } : { taskKey: Number(taskVal) }, a.userKey, a.userName, Number(hours), v('start'), v('end'));
+      await addAssignment(v('pk'), taskVal === 'new' ? { name: v('name') } : { taskKey: Number(taskVal) }, a.userKey, a.userName, Math.round(tot.total * 100) / 100, v('start'), v('end'), v('status'));
       rsAllocClose(); toast('Assignment created for ' + a.userName); rsReloadUser(a.userKey);
     } catch (e) {
       a.busy = false; root.querySelectorAll('.uxa-rs-dbtns button').forEach(b => { b.disabled = false; });
       say('Could not create the assignment: ' + ((e && e.message) || e));
     }
+  }
+  // ---- click or drag across blank days in a lane to pick the dates to allocate ----
+  function rsSelStart(e) {
+    const tr = e.target.closest && e.target.closest('.uxa-rs-track.alloc');
+    if (!tr || e.button !== 0 || rs.drag || rs.alloc || e.target.closest('.uxa-rs-bar') || !rs.vdays.length) return;
+    const u = (rs.staff || []).find(x => x.UserKey === Number(tr.dataset.u)); if (!u) return;
+    const n = rs.vdays.length, r = tr.getBoundingClientRect(), idx = x => Math.max(0, Math.min(n - 1, Math.floor((x - r.left) / r.width * n)));
+    const i0 = idx(e.clientX); let i1 = i0;
+    const box = document.createElement('div'); box.className = 'uxa-rs-sel-box'; tr.appendChild(box);
+    const paint = () => { const a = Math.min(i0, i1), b = Math.max(i0, i1); box.style.left = (a / n * 100) + '%'; box.style.width = ((b - a + 1) / n * 100) + '%'; };
+    paint(); rs.drag = { sel: true };
+    e.preventDefault();   // no text selection while sweeping
+    const move = ev => { i1 = idx(ev.clientX); paint(); };
+    const up = () => {
+      document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true);
+      rs.drag = null; box.remove();
+      if (rs.redraw) { rs.redraw = false; rsDrawSoon(); }
+      rsAllocOpen(u, rsYmd(rs.vdays[Math.min(i0, i1)]), rsYmd(rs.vdays[Math.max(i0, i1)]));
+    };
+    document.addEventListener('mousemove', move, true); document.addEventListener('mouseup', up, true);
   }
   // ---- drag a bar sideways to reschedule that assignment (snaps to day columns) ----
   function rsDragStart(e) {
@@ -5134,13 +5184,6 @@
       const el = e.target.closest('[data-act]');
       if (rs.fmenu && !e.target.closest('.uxa-rs-fwrap')) { rs.fmenu = null; rsDrawPop(); }   // click outside closes the menu
       if (!el) {
-        // A click on a blank part of someone's lane: allocate them on the day under the pointer.
-        const tr = e.target.closest('.uxa-rs-track.alloc');
-        if (tr && !e.target.closest('.uxa-rs-dlgbg') && rs.vdays.length) {
-          const r = tr.getBoundingClientRect(), i = Math.max(0, Math.min(rs.vdays.length - 1, Math.floor((e.clientX - r.left) / r.width * rs.vdays.length)));
-          const u = (rs.staff || []).find(x => x.UserKey === Number(tr.dataset.u));
-          if (u) rsAllocOpen(u, rsYmd(rs.vdays[i]));
-        }
         return;
       }
       const act = el.dataset.act;
@@ -5162,18 +5205,24 @@
     });
     root.addEventListener('input', e => {
       if (e.target.classList.contains('uxa-rs-q')) { rs.q = e.target.value.trim().toLowerCase(); rsDraw(); }
+      else if (e.target.dataset && (e.target.dataset.al === 'hours' || e.target.dataset.al === 'start' || e.target.dataset.al === 'end')) rsAllocSum();
+      else if (e.target.classList.contains('uxa-rs-pq')) {   // narrow the project list; a client name matches all its projects
+        const v = e.target.value.trim().toLowerCase();
+        root.querySelectorAll('.uxa-rs-plist optgroup').forEach(g => { const gHit = !v || g.label.toLowerCase().indexOf(v) >= 0; let any = false; [...g.children].forEach(o => { const show = gHit || o.textContent.toLowerCase().indexOf(v) >= 0; o.hidden = !show; if (show) any = true; }); g.hidden = !any; });
+      }
       else if (e.target.classList.contains('uxa-rs-fq')) { const v = e.target.value.trim().toLowerCase(); root.querySelectorAll('.uxa-rs-fo').forEach(l => { l.style.display = !v || l.textContent.toLowerCase().indexOf(v) >= 0 ? '' : 'none'; }); }
     });
     root.addEventListener('change', e => {
       const ds = e.target.dataset || {};
       if (ds.al === 'pk') { rsAllocTasks(e.target.value); return; }
+      if (ds.al === 'start' || ds.al === 'end' || ds.al === 'mode' || ds.al === 'hours') { rsAllocSum(); return; }
       if (ds.al === 'task') { const nb = root.querySelector('.uxa-rs-newtask'); nb.hidden = e.target.value !== 'new'; if (!nb.hidden) nb.querySelector('input').focus(); return; }
       if (ds.al) return;
       if (ds.fcat) { const set = rs.f[ds.fcat]; if (e.target.checked) { set.add(ds.fval); rs.fl[ds.fcat + '|' + ds.fval] = ds.flab; } else set.delete(ds.fval); rsDraw(); return; }   // (popover stays as is: keeps its scroll + search)
       if (ds.sel === 'sort') { rs.sort = e.target.value; rsDraw(); return; }
       if (ds.sel === 'span') { rs.span = e.target.value === '1' ? 1 : 2; rs.gen++; rsQueue(); rsDraw(); return; }
       const o = ds.opt; if (o) { rs[o] = e.target.checked; if (o === 'useFilter') rsQueue(); if (o === 'meetings') rsQueueCal(); rsDraw(); } });
-    root.addEventListener('mousedown', rsDragStart);
+    root.addEventListener('mousedown', e => { rsDragStart(e); if (!rs.drag) rsSelStart(e); });
     root.addEventListener('dragstart', e => { if (e.target.closest && e.target.closest('.uxa-rs-bar')) e.preventDefault(); });
     document.body.appendChild(root);
     document.addEventListener('keydown', rsKey, true);
