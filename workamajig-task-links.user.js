@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.98.0';
+  const VERSION = '0.99.0';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4470,6 +4470,328 @@
     }
   }
 
+  // ---------- Resource Schedule: an isolated person × week resourcing view ----------
+  // Gated via resourceScheduleOn() (sync -> ON('resource.schedule')). Workamajig's Scheduling screen is a status-column
+  // board with no "who is booked when" timeline. This is our own full-screen view (it renders nothing inside Workamajig's
+  // screens, so their re-renders and layout never touch it): one lane per person, a capacity row per day (hours vs that
+  // person's daily capacity, green / amber / red), and each assignment as a bar across the days it runs.
+  // Data comes straight from the two reads the native Scheduling screen itself makes — the staff roster with daily
+  // (Traffic.loadRMStaff), the viewer's Scheduling settings (Traffic.initRM: hours per day + their saved Users filter)
+  // and one week of assignments per person (ResourceManagement.getUserAssignmentsForWeek, with the native screen's own
+  // application tag). We ask for it WITHOUT the calendar sync the native screen requests: that option made a person
+  // take 20-60 s to answer; without it a person loads in well under a second. Meetings are therefore opt-in ("Include
+  // meetings"): a second, one-person-at-a-time pass that adds each day's meeting hours once it arrives. Daily hours
+  // follow Workamajig's own model: a past day shows the time logged that day; today onward shows planned hours (each
+  // assignment's weekly DisplayHours spread over its remaining active days); capacity is the viewer's Scheduling "max hours" per
+  // weekday, exactly what the native staff tiles compare against. READ-ONLY: nothing here writes to Workamajig. The
+  // only thing we add to a native screen is the launcher button on the Scheduling toolbar.
+  const RS_AID = 'projects.traffic.rm';
+  const RS_CLS = 'WJAPP.Modules.Project.ResourceManagement';
+  const RS_APP = 'getStaffSchedule_getStaffDetail';
+  const RS_BAR = 20, RS_GAP = 4;                   // bar height + vertical gap, px
+  const RS_FLAG = ['WorkSun', 'WorkMon', 'WorkTue', 'WorkWed', 'WorkThur', 'WorkFri', 'WorkSat'];                       // by Date.getDay()
+  function resourceScheduleOn() { return true; }
+  const rs = {
+    open: false, week: null,                       // week = the Monday being shown
+    staff: null, staffErr: false,                  // roster rows from loadRMStaff (null = not loaded yet)
+    data: new Map(),                               // "<weekIso>|<userKey>" -> null (loading) | { tasks, time, err }
+    status: new Map(),                             // TaskUserStatusKey -> { color, name }
+    maxHours: 8, filterKeys: null,                 // hours/day capacity + the viewer's saved Scheduling "Users" filter
+    q: '', plannedOnly: false, weekends: false, useFilter: true, meetings: false, calBusy: false, collapsed: new Set(), gen: 0, raf: 0
+  };
+  const rsDate = s => { const m = /(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
+  const rsIso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + 'T00:00:00';
+  const rsAdd = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const rsToday = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+  const rsMonday = d => rsAdd(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -((d.getDay() + 6) % 7));
+  const rsNum = n => (Math.round(n * 10) / 10).toLocaleString('en-US');
+  const rsLevel = (hrs, cap) => !cap ? (hrs > 0 ? 'over' : 'off') : (hrs / cap > 1.0001 ? 'over' : (hrs / cap >= 0.85 ? 'warn' : 'ok'));
+  // Dark or white text, whichever reads on the status colour (Workamajig's palette runs from pale grey to deep red).
+  function rsInk(hex) {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || '').trim());
+    if (!m) return '#fff';
+    return (0.299 * parseInt(m[1], 16) + 0.587 * parseInt(m[2], 16) + 0.114 * parseInt(m[3], 16)) > 165 ? '#1f2d3d' : '#fff';
+  }
+  // An assignment is active on a day inside its (assignment-level, else task-level) plan span that is a working day for it.
+  function rsActive(t, d) {
+    const s = rsDate(t.APlanStart || t.PlanStart), e = rsDate(t.APlanComplete || t.PlanComplete);
+    if (!s || !e || d < s || d > e) return false;
+    const f = t[RS_FLAG[d.getDay()]];
+    return f == null ? true : !!f;
+  }
+  // Per-day hours for one person. A past day shows the time logged that day. From today on, each assignment's
+  // DisplayHours — Workamajig's allocation for THIS week — is spread evenly over the assignment's remaining active days
+  // in the week (so on a Friday the whole week's remainder lands on Friday, exactly as the native tiles show it).
+  // cap = hours per weekday; mt = the part of hrs that is meetings.
+  function rsUserDays(rec, days) {
+    const today = rsToday();
+    const out = days.map(d => ({ cap: (d.getDay() === 0 || d.getDay() === 6) ? 0 : rs.maxHours, hrs: 0, logged: d < today, mt: 0 }));
+    for (const t of rec.time) { const x = rsDate(t.PlanStart); if (!x) continue; days.forEach((d, i) => { if (out[i].logged && +x === +d) out[i].hrs += +t.Hours || 0; }); }
+    for (const t of rec.tasks) {
+      const dh = +t.DisplayHours || 0; if (!dh) continue;
+      const idx = []; days.forEach((d, i) => { if (!out[i].logged && rsActive(t, d)) idx.push(i); });
+      idx.forEach(i => { out[i].hrs += dh / idx.length; });
+    }
+    if (rs.meetings && Array.isArray(rec.cal)) for (const ev of rec.cal) {
+      const x = rsDate(ev.PlanStart || ev.EventStart); if (!x) continue;
+      days.forEach((d, i) => { if (!out[i].logged && +x === +d) { out[i].hrs += +ev.Hours || 0; out[i].mt += +ev.Hours || 0; } });
+    }
+    return out;
+  }
+  async function rsLoadStaff() {
+    try {
+      const d = await call('Modules.Project.Traffic', 'loadRMStaff', {});
+      rs.staff = (d.table || []).filter(u => u && u.UserKey && u.UserName);
+      rs.staffErr = false;
+    } catch (e) { rs.staff = []; rs.staffErr = true; }
+    try {   // the viewer's own Scheduling settings; optional (defaults stand if this read fails or changes shape)
+      const init = (await call('Modules.Project.Traffic', 'initRM', {})).init || {};
+      let t = (init.session || {}).trafficRM; if (typeof t === 'string') t = JSON.parse(t);
+      if (t && +t.MaxHours > 0) rs.maxHours = +t.MaxHours;
+      let sc = t && t.SearchCriteria; if (typeof sc === 'string') sc = JSON.parse(sc);
+      const uf = (sc || []).find(c => c && c.Name === 'Users');
+      const keys = uf ? String(uf.Keys == null ? '' : uf.Keys).split(',').map(Number).filter(Boolean) : [];
+      rs.filterKeys = keys.length ? new Set(keys) : null;
+    } catch (e) {}
+    const ck = document.querySelector('#uxa-rs .uxa-rs-filter'); if (ck) ck.hidden = !rs.filterKeys;
+    rsQueue(); rsDraw();
+  }
+  // Load the shown week for everyone not cached yet, four people at a time (the native screen loads them one by one).
+  function rsQueue() {
+    if (!rs.open || !rs.staff) return;
+    const wk = rsIso(rs.week), end = rsIso(rsAdd(rs.week, 6)), gen = rs.gen;
+    const todo = rsPeople().filter(u => !rs.data.has(wk + '|' + u.UserKey));
+    let i = 0;
+    const worker = async () => {
+      while (i < todo.length && rs.open && gen === rs.gen) {
+        const u = todo[i++], key = wk + '|' + u.UserKey;
+        if (rs.data.has(key)) continue;
+        rs.data.set(key, null);
+        try {
+          const d = await call(RS_CLS, 'getUserAssignmentsForWeek', {
+            userKey: u.UserKey, startDate: wk, endDate: end, loadCalendars: false, loadTime: true, loadDaySlots: false,
+            includePrior: 1, maxHours: rs.maxHours, predecessorsComplete: 0, showAssignmentZeroAllocated: 1, application: RS_APP,
+            sessionUserOnly: false, openToDoOnly: 0, openDeliverablesOnly: 0, AutoExpandTaskGrid: 0, includePriorUnassigned: 1
+          });
+          (d.taskUserStatus || []).forEach(s => { if (s && s.TaskUserStatusKey != null) rs.status.set(s.TaskUserStatusKey, { color: s.StatusColor || '#7a8aa0', name: s.StatusName || '' }); });
+          rs.data.set(key, { tasks: d.trafficTasks || [], time: d.trafficTime || [] });
+        } catch (e) { rs.data.set(key, { tasks: [], time: [], err: true }); }
+        rsDrawSoon();
+      }
+      rsQueueCal();
+    };
+    for (let k = 0; k < 4; k++) worker();
+  }
+  // Opt-in second pass: the same read WITH calendar sync, one person at a time (it is slow), to add meeting hours.
+  async function rsQueueCal() {
+    if (!rs.meetings || rs.calBusy || !rs.open) return;
+    rs.calBusy = true;
+    try {
+      for (;;) {
+        if (!rs.meetings || !rs.open) break;
+        const wk = rsIso(rs.week), week = rs.week;
+        const u = rsPeople().find(x => { const r = rs.data.get(wk + '|' + x.UserKey); return r && !r.err && r.cal === undefined; });
+        if (!u) break;
+        const rec = rs.data.get(wk + '|' + u.UserKey); rec.cal = null;   // null = loading
+        try {
+          const d = await call(RS_CLS, 'getUserAssignmentsForWeek', {
+            userKey: u.UserKey, startDate: wk, endDate: rsIso(rsAdd(week, 6)), loadCalendars: true, loadTime: false, loadDaySlots: false,
+            includePrior: 1, maxHours: rs.maxHours, predecessorsComplete: 0, showAssignmentZeroAllocated: 1, application: RS_APP,
+            sessionUserOnly: false, openToDoOnly: 0, openDeliverablesOnly: 0, AutoExpandTaskGrid: 0, includePriorUnassigned: 1
+          });
+          rec.cal = d.trafficCalendarEvents || [];
+        } catch (e) { rec.cal = []; }
+        rsDrawSoon();
+      }
+    } finally { rs.calBusy = false; }
+  }
+  // The people shown: everyone on the roster, or just the viewer's saved Scheduling "Users" filter when that's on.
+  function rsPeople() { return (rs.staff || []).filter(u => !rs.useFilter || !rs.filterKeys || rs.filterKeys.has(u.UserKey)); }
+  function rsDrawSoon() { if (rs.raf) return; rs.raf = setTimeout(() => { rs.raf = 0; rsDraw(); }, 60); }   // (a timer, not rAF: rAF stalls in a background tab)
+  function ensureRsStyle() {
+    if (document.getElementById('uxa-rs-style')) return;
+    const s = document.createElement('style'); s.id = 'uxa-rs-style';
+    const f = '-apple-system,Segoe UI,Roboto,sans-serif';
+    s.textContent = '#uxa-rs-btn{font:13px/1 ' + f + ';cursor:pointer;margin-left:8px;padding:6px 12px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#334;display:inline-flex;align-items:center;gap:6px;vertical-align:middle}'
+      + '#uxa-rs-btn:hover{border-color:#7ab51d;color:#3f6d12}'
+      + '#uxa-rs{position:fixed;inset:0;z-index:99990;background:#fff;color:#243;font:13px/1.3 ' + f + ';display:flex;flex-direction:column}'
+      + '#uxa-rs *{box-sizing:border-box}'
+      + '.uxa-rs-top{flex:0 0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 18px;border-bottom:1px solid #e3e6ea}'
+      + '.uxa-rs-title{font-size:18px;font-weight:700;color:#1f2d3d;margin-right:6px}'
+      + '.uxa-rs-week{font-weight:600;color:#1f2d3d;min-width:150px}'
+      + '.uxa-rs-b{font:inherit;cursor:pointer;padding:6px 10px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#334;line-height:1}'
+      + '.uxa-rs-b:hover{border-color:#9aa6b4}'
+      + '.uxa-rs-q{font:inherit;padding:6px 10px;border:1px solid #cfd6df;border-radius:7px;width:230px}'
+      + '.uxa-rs-q:focus{outline:none;border-color:#7ab51d;box-shadow:0 0 0 3px rgba(122,181,29,.15)}'
+      + '.uxa-rs-ck{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;color:#445}.uxa-rs-ck[hidden]{display:none}'
+      + '#uxa-rs .uxa-rs-ck input{appearance:auto;-webkit-appearance:checkbox;opacity:1;position:static;display:inline-block;width:14px;height:14px;margin:0;accent-color:#7ab51d}'
+      + '.uxa-rs-sp{flex:1 1 auto}'
+      + '.uxa-rs-note{font-size:11px;color:#8a93a0;cursor:help;white-space:nowrap}'
+      + '.uxa-rs-body{flex:1 1 auto;overflow:auto}'
+      + '.uxa-rs-head{display:flex;position:sticky;top:0;z-index:3;background:#fff;border-bottom:1px solid #e3e6ea}'
+      + '.uxa-rs-who{flex:0 0 220px;padding:8px 12px;border-right:1px solid #e3e6ea}'
+      + '.uxa-rs-days{flex:1 1 auto;display:flex;min-width:0}'
+      + '.uxa-rs-dh{flex:1 1 0;text-align:center;padding:8px 2px;color:#667;border-left:1px solid #eef0f3;font-size:12px}'
+      + '.uxa-rs-dh:first-child,.uxa-rs-cap:first-child{border-left:0}'
+      + '.uxa-rs-dh b{color:#243}.uxa-rs-dh.we{background:#fafbfc;color:#9aa1ab}.uxa-rs-dh.td{background:rgba(122,181,29,.10);color:#3f6d12}'
+      + '.uxa-rs-lane{display:flex;border-bottom:1px solid #e9ecef}'
+      + '.uxa-rs-lane .uxa-rs-who{cursor:pointer}'
+      + '.uxa-rs-lane .uxa-rs-who:hover{background:#fafbfc}'
+      + '.uxa-rs-name{font-weight:600;color:#1f2d3d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+      + '.uxa-rs-name i{display:inline-block;width:12px;font-style:normal;color:#8a93a0;font-size:10px}'
+      + '.uxa-rs-sub{font-size:11px;color:#667;margin:3px 0 5px 12px}'
+      + '.uxa-rs-sub .over{color:#c53030;font-weight:600}.uxa-rs-sub .avail{color:#2f855a;font-weight:600}'
+      + '.uxa-rs-util{height:5px;border-radius:3px;background:#e3e6ea;overflow:hidden;margin-left:12px}'
+      + '.uxa-rs-util span{display:block;height:100%;border-radius:3px}'
+      + '.uxa-rs-main{flex:1 1 auto;min-width:0}'
+      + '.uxa-rs-caps{display:flex;border-bottom:1px solid #f0f2f4}'
+      + '.uxa-rs-cap{flex:1 1 0;text-align:center;padding:5px 2px;border-left:1px solid #eef0f3;font-size:12px;font-weight:600}'
+      + '.uxa-rs-cap small{font-weight:400;color:#8a93a0;font-size:10px}'
+      + '.uxa-rs-cap.ok{background:#e9f6ee;color:#22663f}.uxa-rs-cap.warn{background:#fdf1dc;color:#8a5a00}.uxa-rs-cap.over{background:#fde5e5;color:#b42323}.uxa-rs-cap.off{background:#fafbfc;color:#b3b9c2}'
+      + '.uxa-rs-cap.lg{font-style:italic}'
+      + '.uxa-rs-track{position:relative}'
+      + '.uxa-rs-col{position:absolute;top:0;bottom:0;border-left:1px solid #eef0f3}'
+      + '.uxa-rs-col.we{background:#fafbfc}.uxa-rs-col.td{background:rgba(122,181,29,.06)}'
+      + '.uxa-rs-bar{position:absolute;height:' + RS_BAR + 'px;border-radius:5px;display:flex;align-items:center;padding:0 7px;font-size:11px;font-weight:600;text-decoration:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10);overflow:hidden}'
+      + '#uxa-rs .uxa-rs-bar:hover{filter:brightness(.94);box-shadow:inset 0 0 0 1px rgba(0,0,0,.25);text-decoration:none}'
+      + '.uxa-rs-bar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+      + '.uxa-rs-bar em{font-style:normal;font-weight:700;margin-left:auto;padding-left:8px;white-space:nowrap;opacity:.9}'
+      + '.uxa-rs-bar.zero{opacity:.5}'
+      + '.uxa-rs-msg{padding:6px 12px;color:#8a93a0;font-size:12px;font-style:italic}'
+      + '.uxa-rs-empty{padding:28px;color:#8a93a0}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function rsDraw() {
+    const root = document.getElementById('uxa-rs'); if (!root || !rs.open) return;
+    const all = Array.from({ length: 7 }, (_, i) => rsAdd(rs.week, i));
+    const days = rs.weekends ? all : all.slice(0, 5), n = days.length, today = rsToday(), wk = rsIso(rs.week);
+    const sun = all[6], mo = d => d.toLocaleDateString('en-US', { month: 'short' });
+    root.querySelector('.uxa-rs-week').textContent = mo(rs.week) + ' ' + rs.week.getDate() + ' – ' + (sun.getMonth() !== rs.week.getMonth() ? mo(sun) + ' ' : '') + sun.getDate() + ', ' + sun.getFullYear();
+    const body = root.querySelector('.uxa-rs-body');
+    if (!rs.staff) { body.innerHTML = '<div class="uxa-rs-empty">Loading the team…</div>'; return; }
+    if (!rs.staff.length) { body.innerHTML = '<div class="uxa-rs-empty">' + (rs.staffErr ? 'Couldn’t load the staff list from Workamajig. Try Refresh.' : 'No staff to show. Resource scheduling may not be available for your Workamajig login.') + '</div>'; return; }
+    const dcls = d => (d.getDay() === 0 || d.getDay() === 6 ? ' we' : '') + (+d === +today ? ' td' : '');
+    let html = '<div class="uxa-rs-head"><div class="uxa-rs-who"></div><div class="uxa-rs-days">'
+      + days.map(d => `<div class="uxa-rs-dh${dcls(d)}">${esc(d.toLocaleDateString('en-US', { weekday: 'short' }))} <b>${d.getDate()}</b></div>`).join('') + '</div></div>';
+    const cols = days.map((d, i) => `<div class="uxa-rs-col${dcls(d)}" style="left:${(i / n * 100).toFixed(4)}%;width:${(100 / n).toFixed(4)}%"></div>`).join('');
+    const q = rs.q; let shown = 0;
+    for (const u of rsPeople()) {
+      const rec = rs.data.get(wk + '|' + u.UserKey);
+      const nameHit = !q || String(u.UserName).toLowerCase().indexOf(q) >= 0;
+      let tasks = [];
+      if (rec) {
+        for (const t of rec.tasks) {
+          if (rs.plannedOnly && !(+t.DisplayHours > 0)) continue;
+          if (q && !nameHit && [t.ProjectNumber, t.ProjectName, t.TaskName, t.CompanyName].join(' ').toLowerCase().indexOf(q) < 0) continue;
+          let first = -1, last = -1;
+          days.forEach((d, i) => { if (rsActive(t, d)) { if (first < 0) first = i; last = i; } });
+          if (first >= 0) tasks.push({ t, first, last });
+        }
+        // work with hours left this week first, then by where it starts on the timeline
+        tasks.sort((a, b) => ((+b.t.DisplayHours > 0) - (+a.t.DisplayHours > 0)) || (a.first - b.first) || (b.last - a.last));
+      }
+      if (q && !nameHit && !tasks.length) continue;
+      shown++;
+      const open = !rs.collapsed.has(u.UserKey);
+      let sub = 'Loading…', util = '', caps = days.map(() => '<div class="uxa-rs-cap off">·</div>').join('');
+      if (rec) {
+        const wd = rsUserDays(rec, all), tot = wd.reduce((a, x) => a + x.hrs, 0), cap = wd.reduce((a, x) => a + x.cap, 0), diff = tot - cap;
+        sub = rsNum(tot) + ' / ' + rsNum(cap) + ' h · ' + (diff > 0.05 ? `<span class="over">${rsNum(diff)} over</span>` : `<span class="avail">${rsNum(-diff)} available</span>`);
+        const lv = rsLevel(tot, cap), colr = lv === 'over' ? '#e53e3e' : (lv === 'warn' ? '#dd8800' : '#38a169');
+        util = `<div class="uxa-rs-util"><span style="width:${Math.min(100, cap ? tot / cap * 100 : (tot ? 100 : 0)).toFixed(1)}%;background:${colr}"></span></div>`;
+        caps = wd.slice(0, n).map(x => `<div class="uxa-rs-cap ${rsLevel(x.hrs, x.cap)}${x.logged ? ' lg' : ''}" title="${x.logged ? 'Time logged' : 'Planned hours' + (x.mt ? ' + ' + rsNum(x.mt) + ' h meetings' : '')}: ${rsNum(x.hrs)} h · capacity ${rsNum(x.cap)} h">${rsNum(x.hrs)} <small>/ ${rsNum(x.cap)}</small></div>`).join('');
+        if (rs.meetings && !Array.isArray(rec.cal)) sub += ' · meetings loading…';
+        if (rec.err) sub = 'Couldn’t load — try Refresh';
+      }
+      let track = '';
+      if (open) {
+        let bars = '';
+        tasks.forEach((x, i) => {
+          const t = x.t, st = rs.status.get(t.TaskUserStatusKey) || { color: '#7a8aa0', name: '' }, dh = +t.DisplayHours >= 0.05 ? +t.DisplayHours : 0;
+          const lbl = (t.ProjectNumber ? t.ProjectNumber + ' · ' : '') + (t.TaskName || 'Task');
+          const tip = (t.ProjectFullName || t.ProjectName || '') + '\n' + (t.TaskName || '') + (st.name ? '\nStatus: ' + st.name : '')
+            + '\n' + String(t.APlanStart || t.PlanStart || '').slice(0, 10) + ' → ' + String(t.APlanComplete || t.PlanComplete || '').slice(0, 10)
+            + '\nPlanned ' + rsNum(+t.Hours || 0) + ' h · logged ' + rsNum(+t.ActualHours || 0) + ' h · ' + (+t.PercComp || 0) + '% complete' + (dh ? '\n' + rsNum(dh) + ' h allocated this week' : '');
+          bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * (RS_BAR + RS_GAP) + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}"><span>${esc(lbl)}</span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}</a>`;
+        });
+        track = rec && !tasks.length ? '<div class="uxa-rs-msg">No assignments' + (q || rs.plannedOnly ? ' match' : ' this week') + '</div>'
+          : `<div class="uxa-rs-track" style="height:${Math.max(tasks.length, 1) * (RS_BAR + RS_GAP) + RS_GAP}px">${cols}${bars}</div>`;
+      }
+      html += `<div class="uxa-rs-lane"><div class="uxa-rs-who" data-act="toggle" data-u="${u.UserKey}"><div class="uxa-rs-name"><i>${open ? '▾' : '▸'}</i>${esc(u.UserName)}</div><div class="uxa-rs-sub">${sub}</div>${util}</div>`
+        + `<div class="uxa-rs-main"><div class="uxa-rs-caps">${caps}</div>${track}</div></div>`;
+    }
+    if (!shown) html += '<div class="uxa-rs-empty">Nobody matches “' + esc(q) + '”.</div>';
+    body.innerHTML = html;
+  }
+  function rsSetWeek(d) { rs.week = rsMonday(d); rs.gen++; rsQueue(); rsDraw(); }
+  function rsKey(e) { if (e.key === 'Escape' && rs.open) { e.stopPropagation(); rsClose(); } }
+  function rsOpen() {
+    if (rs.open) return;
+    ensureRsStyle();
+    rs.open = true; rs.gen++;
+    if (!rs.week) rs.week = rsMonday(new Date());
+    const root = document.createElement('div'); root.id = 'uxa-rs';
+    root.innerHTML = '<div class="uxa-rs-top"><span class="uxa-rs-title">Resource Schedule</span>'
+      + '<button type="button" class="uxa-rs-b" data-act="prev" title="Previous week">‹</button><button type="button" class="uxa-rs-b" data-act="today">This week</button><button type="button" class="uxa-rs-b" data-act="next" title="Next week">›</button>'
+      + '<span class="uxa-rs-week"></span>'
+      + '<input type="search" class="uxa-rs-q" placeholder="Search person, project or client" aria-label="Search person, project or client">'
+      + '<label class="uxa-rs-ck"><input type="checkbox" data-opt="plannedOnly">Planned hours only</label>'
+      + '<label class="uxa-rs-ck"><input type="checkbox" data-opt="weekends">Weekends</label>'
+      + '<label class="uxa-rs-ck" title="Add calendar meetings to today and future days. Workamajig answers this slowly (up to a minute per person), so it fills in gradually."><input type="checkbox" data-opt="meetings">Include meetings</label>'
+      + '<label class="uxa-rs-ck uxa-rs-filter" title="Show only the people in your saved Scheduling Users filter"' + (rs.filterKeys ? '' : ' hidden') + '><input type="checkbox" data-opt="useFilter">My Scheduling filter</label>'
+      + '<span class="uxa-rs-sp"></span><span class="uxa-rs-note" title="Each day shows hours against capacity (your Scheduling max hours per weekday). Past days show the time logged that day; today onward shows planned hours per day, the same way Workamajig’s staff tiles count them.">ⓘ How hours are counted</span>'
+      + '<button type="button" class="uxa-rs-b" data-act="refresh" title="Reload this week">Refresh</button><button type="button" class="uxa-rs-b" data-act="close" title="Close (Esc)">✕ Close</button></div>'
+      + '<div class="uxa-rs-body"></div>';
+    root.querySelector('.uxa-rs-q').value = rs.q;
+    root.querySelectorAll('input[data-opt]').forEach(c => { c.checked = !!rs[c.dataset.opt]; });
+    root.addEventListener('click', e => {
+      const el = e.target.closest('[data-act]'); if (!el) return;
+      const act = el.dataset.act;
+      if (act === 'close') rsClose();
+      else if (act === 'prev') rsSetWeek(rsAdd(rs.week, -7));
+      else if (act === 'next') rsSetWeek(rsAdd(rs.week, 7));
+      else if (act === 'today') rsSetWeek(new Date());
+      else if (act === 'refresh') { const wk = rsIso(rs.week); for (const k of [...rs.data.keys()]) if (k.indexOf(wk + '|') === 0) rs.data.delete(k); rs.gen++; if (rs.staff && rs.staff.length) { rsQueue(); rsDraw(); } else { rs.staff = null; rsDraw(); rsLoadStaff(); } }
+      else if (act === 'toggle') { const k = Number(el.dataset.u); if (rs.collapsed.has(k)) rs.collapsed.delete(k); else rs.collapsed.add(k); rsDraw(); }
+    });
+    root.addEventListener('input', e => { if (e.target.classList.contains('uxa-rs-q')) { rs.q = e.target.value.trim().toLowerCase(); rsDraw(); } });
+    root.addEventListener('change', e => { const o = e.target.dataset && e.target.dataset.opt; if (o) { rs[o] = e.target.checked; if (o === 'useFilter') rsQueue(); if (o === 'meetings') rsQueueCal(); rsDraw(); } });
+    document.body.appendChild(root);
+    document.addEventListener('keydown', rsKey, true);
+    rsDraw();
+    if (rs.staff && rs.staff.length) rsQueue(); else { rs.staff = null; rsLoadStaff(); }
+  }
+  function rsClose() {
+    rs.open = false; rs.gen++;
+    document.removeEventListener('keydown', rsKey, true);
+    const root = document.getElementById('uxa-rs'); if (root) root.remove();
+  }
+  // The Scheduling board toolbar (it carries the assignments / meetings radio buttons) hosts our launcher.
+  function rsToolbar() {
+    for (const m of document.querySelectorAll('menu.toolbar')) {
+      if ([...m.querySelectorAll('button')].some(b => /^\s*(assignments|meetings)\b/i.test(b.textContent || ''))) return m;
+    }
+    return null;
+  }
+  const RS_ICON = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1" y="2.5" width="9" height="2.3" rx="1.1" fill="currentColor"/><rect x="4" y="6.9" width="11" height="2.3" rx="1.1" fill="currentColor"/><rect x="1" y="11.3" width="7" height="2.3" rx="1.1" fill="currentColor"/></svg>';
+  function resourceScheduleTick() {
+    let btn = document.getElementById('uxa-rs-btn');
+    if (!resourceScheduleOn()) { if (btn) btn.remove(); if (rs.open) rsClose(); return; }
+    if (rs.open && !document.getElementById('uxa-rs')) rsClose();   // our view was removed from under us
+    const tb = aid() === RS_AID ? rsToolbar() : null;
+    if (!tb) { if (btn) btn.remove(); return; }
+    if (btn && tb.contains(btn)) return;
+    if (btn) btn.remove();                                           // re-attach after a native toolbar re-render
+    ensureRsStyle();
+    btn = document.createElement('button'); btn.id = 'uxa-rs-btn'; btn.type = 'button';
+    btn.title = 'Open the team’s week as a timeline with capacity';
+    btn.innerHTML = RS_ICON + '<span>Resource Schedule</span>';
+    btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); rsOpen(); });
+    // Sit with the toolbar's own buttons, ahead of the (long, clipped) filter summary that follows them.
+    const after = [...tb.children].find(c => c.tagName !== 'BUTTON' && c.tagName !== 'PROGRESS');
+    if (after) tb.insertBefore(btn, after); else tb.appendChild(btn);
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -4498,6 +4820,7 @@
     creativeFilterTick();
     noteBreaksTick();
     timeGroupTick();
+    resourceScheduleTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
