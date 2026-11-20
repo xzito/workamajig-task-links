@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.1';
+  const VERSION = '0.99.2';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -2258,6 +2258,9 @@
   const inSchedule = sel => { const pg = schedulePage(); return pg && pg.querySelector(sel); };
 
   function boardTick() {
+    // Detached mode (the card modal shown over the Resource Schedule) has no schedule page under it: leave it alone
+    // while its view is still up, and end it the moment the user navigates away.
+    if (board.detached) { if (rs.open && aid() === board.detached.aid) return; boardDetachEnd(); }
     if (aid() !== 'projects.schedule.edit2') {
       if (board.on || board.host) closeBoard(true);
       closeListHygiene();
@@ -2956,6 +2959,7 @@
 
   async function loadBoard() {
     const pk = board.projectKey, seq = ++board.seq;
+    if (!(Number(pk) > 0)) return;   // never load with a missing project key
     board.convHosts = null; // conversation sections reload on the next modal open
     if (!board.data) board.root.querySelector('.cols').innerHTML = '<div class="msg">Loading board…</div>';
     scheduleCache.delete(String(pk));
@@ -3305,7 +3309,47 @@
   // handler never sees it and only the modal closes.
   window.addEventListener('keydown', e => { if (e.key === 'Escape' && board.on && board.modal) { e.stopImmediatePropagation(); e.preventDefault(); if (board.modal.editing) { board.modal.editing = false; renderModal(); } else if (board.modal.editingName) { board.modal.editingName = false; board.modal.nameDraft = null; board.modal.nameMsg = ''; renderModal(); } else if (board.modal.editingHours) { board.modal.editingHours = false; board.modal.hoursDraft = null; board.modal.hoursMsg = ''; renderModal(); } else closeModal(); } }, true);
   function openModal(ref) { board.modal = { ref, editing: false, draft: '', msg: '' }; board.host.style.zIndex = '40'; renderModal(); const x = board.root && board.root.querySelector('.mx'); if (x) x.focus(); }
-  function closeModal() { board.modal = null; if (board.host) board.host.style.zIndex = '10'; const bg = board.root && board.root.querySelector('.mbg'); if (bg) bg.remove(); }
+  function closeModal() { board.modal = null; if (board.host) board.host.style.zIndex = '10'; const bg = board.root && board.root.querySelector('.mbg'); if (bg) bg.remove(); if (board.detached) boardDetachEnd(); }
+  // ---- detached card modal ----
+  // The same card-details modal, on its own, over another of our views (the Resource Schedule) with no schedule page
+  // underneath. We load that task's project schedule into the board state exactly as the board does, keep the board
+  // itself hidden (only the modal's backdrop shows), and drop it all again when the modal closes. "Show in list" and
+  // "Manage assignees" need the schedule page, so they are hidden here ("Open full assignment" covers both).
+  async function openTaskModalDetached(pk, taskKey, tuk, userKey) {
+    pk = String(pk || '');
+    if (!(Number(pk) > 0) || !(Number(taskKey) > 0) || board.detached) return;
+    if (!board.host) buildBoardHost();
+    if (!document.getElementById('uxa-board-detached')) {
+      const g = document.createElement('style'); g.id = 'uxa-board-detached';
+      g.textContent = '#uxa-board[data-detached]{display:block!important;visibility:visible!important;left:0!important;top:0!important;width:0!important;height:0!important;z-index:99995!important}';
+      (document.head || document.documentElement).appendChild(g);
+    }
+    if (!board.root.querySelector('style.detached')) {
+      const st = document.createElement('style'); st.className = 'detached';
+      st.textContent = '.wrap.detached{background:transparent}.wrap.detached>:not(.mbg){display:none!important}.wrap.detached .mlist,.wrap.detached .massign{display:none!important}';
+      board.root.appendChild(st);
+    }
+    board.root.querySelector('.wrap').classList.add('detached');
+    board.host.dataset.detached = '1';
+    board.detached = { aid: aid(), userKey: Number(userKey) || 0 };
+    board.on = true; board.reopen = null; board.user = 0;
+    if (board.projectKey !== pk) board.data = null;
+    board.projectKey = pk;
+    toast('Opening task…');
+    await loadBoard();
+    if (!board.detached || board.projectKey !== pk) return;          // closed or superseded while loading
+    if (!board.data || !(board.data.tasks || []).some(x => x.TaskKey === Number(taskKey))) { toast('Could not open that task'); boardDetachEnd(); return; }
+    openModal({ taskKey: Number(taskKey), tuk: Number(tuk) || 0 });
+    if (!board.modal && board.detached) boardDetachEnd();              // the modal feature is off: nothing to show
+  }
+  function boardDetachEnd() {
+    const d = board.detached; if (!d) return;
+    board.detached = null;
+    if (board.host) { delete board.host.dataset.detached; const w = board.root.querySelector('.wrap'); if (w) w.classList.remove('detached'); }
+    board.dirty = false;
+    closeBoard(true);
+    if (rs.open && d.userKey) rsReloadUser(d.userKey);               // the modal may have changed status / hours / dates
+  }
   const linkify = txt => esc(txt).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
   const fmtDate = d => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
@@ -4483,7 +4527,8 @@
   // meetings"): a second, one-person-at-a-time pass that adds each day's meeting hours once it arrives. Daily hours
   // follow Workamajig's own model: a past day shows the time logged that day; today onward shows planned hours (each
   // assignment's weekly DisplayHours spread over its remaining active days); capacity is the viewer's Scheduling "max hours" per
-  // weekday, exactly what the native staff tiles compare against. READ-ONLY: nothing here writes to Workamajig. The
+  // weekday, exactly what the native staff tiles compare against. The view itself is read-only; clicking a bar opens the board's card-details
+  // modal (detached mode), which can edit the task exactly as it does on the board. The
   // only thing we add to a native screen is the launcher button at the right of the Scheduling header.
   const RS_AID = 'projects.traffic.rm';
   const RS_CLS = 'WJAPP.Modules.Project.ResourceManagement';
@@ -4556,6 +4601,22 @@
     const ck = document.querySelector('#uxa-rs .uxa-rs-filter'); if (ck) ck.hidden = !rs.filterKeys;
     rsQueue(); rsDraw();
   }
+  // One person's week (fast: no calendar sync), as the record the view draws from.
+  async function rsWeekRec(userKey, wk, end) {
+    const d = await call(RS_CLS, 'getUserAssignmentsForWeek', {
+      userKey, startDate: wk, endDate: end, loadCalendars: false, loadTime: true, loadDaySlots: false,
+      includePrior: 1, maxHours: rs.maxHours, predecessorsComplete: 0, showAssignmentZeroAllocated: 1, application: RS_APP,
+      sessionUserOnly: false, openToDoOnly: 0, openDeliverablesOnly: 0, AutoExpandTaskGrid: 0, includePriorUnassigned: 1
+    });
+    (d.taskUserStatus || []).forEach(s => { if (s && s.TaskUserStatusKey != null) rs.status.set(s.TaskUserStatusKey, { color: s.StatusColor || '#7a8aa0', name: s.StatusName || '' }); });
+    return { tasks: d.trafficTasks || [], time: d.trafficTime || [] };
+  }
+  // Quietly re-read one person's shown week (after the task modal closes); the lane keeps its old bars until it lands.
+  async function rsReloadUser(userKey) {
+    const wk = rsIso(rs.week), key = wk + '|' + userKey, old = rs.data.get(key);
+    if (!old) return;
+    try { const rec = await rsWeekRec(userKey, wk, rsIso(rsAdd(rs.week, 6))); if (Array.isArray(old.cal)) rec.cal = old.cal; rs.data.set(key, rec); rsDrawSoon(); } catch (e) {}
+  }
   // Load the shown week for everyone not cached yet, four people at a time (the native screen loads them one by one).
   function rsQueue() {
     if (!rs.open || !rs.staff) return;
@@ -4568,13 +4629,7 @@
         if (rs.data.has(key)) continue;
         rs.data.set(key, null);
         try {
-          const d = await call(RS_CLS, 'getUserAssignmentsForWeek', {
-            userKey: u.UserKey, startDate: wk, endDate: end, loadCalendars: false, loadTime: true, loadDaySlots: false,
-            includePrior: 1, maxHours: rs.maxHours, predecessorsComplete: 0, showAssignmentZeroAllocated: 1, application: RS_APP,
-            sessionUserOnly: false, openToDoOnly: 0, openDeliverablesOnly: 0, AutoExpandTaskGrid: 0, includePriorUnassigned: 1
-          });
-          (d.taskUserStatus || []).forEach(s => { if (s && s.TaskUserStatusKey != null) rs.status.set(s.TaskUserStatusKey, { color: s.StatusColor || '#7a8aa0', name: s.StatusName || '' }); });
-          rs.data.set(key, { tasks: d.trafficTasks || [], time: d.trafficTime || [] });
+          rs.data.set(key, await rsWeekRec(u.UserKey, wk, end));
         } catch (e) { rs.data.set(key, { tasks: [], time: [], err: true }); }
         rsDrawSoon();
       }
@@ -4626,7 +4681,7 @@
       + '.uxa-rs-ck{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;color:#445}.uxa-rs-ck[hidden]{display:none}'
       + '#uxa-rs .uxa-rs-ck input{appearance:auto;-webkit-appearance:checkbox;opacity:1;position:static;display:inline-block;width:14px;height:14px;margin:0;accent-color:#7ab51d}'
       + '.uxa-rs-sp{flex:1 1 auto}'
-      + '.uxa-rs-note{font-size:11px;color:#8a93a0;cursor:help;white-space:nowrap}'
+      + '.uxa-rs-note{font-size:14px;color:#8a93a0;cursor:help;white-space:nowrap}'
       + '.uxa-rs-body{flex:1 1 auto;overflow:auto}'
       + '.uxa-rs-head{display:flex;position:sticky;top:0;z-index:3;background:#fff;border-bottom:1px solid #e3e6ea}'
       + '.uxa-rs-who{flex:0 0 220px;padding:8px 12px;border-right:1px solid #e3e6ea}'
@@ -4667,6 +4722,8 @@
     const days = rs.weekends ? all : all.slice(0, 5), n = days.length, today = rsToday(), wk = rsIso(rs.week);
     const sun = all[6], mo = d => d.toLocaleDateString('en-US', { month: 'short' });
     root.querySelector('.uxa-rs-week').textContent = mo(rs.week) + ' ' + rs.week.getDate() + ' – ' + (sun.getMonth() !== rs.week.getMonth() ? mo(sun) + ' ' : '') + sun.getDate() + ', ' + sun.getFullYear();
+    const allBtn = root.querySelector('.uxa-rs-all');
+    if (allBtn) allBtn.textContent = rsPeople().some(u => !rs.collapsed.has(u.UserKey)) ? 'Collapse all' : 'Expand all';
     const body = root.querySelector('.uxa-rs-body');
     if (!rs.staff) { body.innerHTML = '<div class="uxa-rs-empty">Loading the team…</div>'; return; }
     if (!rs.staff.length) { body.innerHTML = '<div class="uxa-rs-empty">' + (rs.staffErr ? 'Couldn’t load the staff list from Workamajig. Try Refresh.' : 'No staff to show. Resource scheduling may not be available for your Workamajig login.') + '</div>'; return; }
@@ -4712,7 +4769,7 @@
           const tip = (t.ProjectFullName || t.ProjectName || '') + '\n' + (t.TaskName || '') + (st.name ? '\nStatus: ' + st.name : '')
             + '\n' + String(t.APlanStart || t.PlanStart || '').slice(0, 10) + ' → ' + String(t.APlanComplete || t.PlanComplete || '').slice(0, 10)
             + '\nPlanned ' + rsNum(+t.Hours || 0) + ' h · logged ' + rsNum(+t.ActualHours || 0) + ' h · ' + (+t.PercComp || 0) + '% complete' + (dh ? '\n' + rsNum(dh) + ' h allocated this week' : '');
-          bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * (RS_BAR + RS_GAP) + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}"><span>${esc(lbl)}</span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}</a>`;
+          bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}" data-pk="${Number(t.ProjectKey) || 0}" data-task="${Number(t.TaskKey) || 0}" data-tuk="${Number(t.TaskUserKey) || 0}" data-u="${u.UserKey}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * (RS_BAR + RS_GAP) + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}"><span>${esc(lbl)}</span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}</a>`;
         });
         track = rec && !tasks.length ? '<div class="uxa-rs-msg">No assignments' + (q || rs.plannedOnly ? ' match' : ' this week') + '</div>'
           : `<div class="uxa-rs-track" style="height:${Math.max(tasks.length, 1) * (RS_BAR + RS_GAP) + RS_GAP}px">${cols}${bars}</div>`;
@@ -4728,7 +4785,7 @@
   function rsOpen() {
     if (rs.open) return;
     ensureRsStyle();
-    rs.open = true; rs.gen++;
+    rs.open = true; rs.gen++; rs.aid = aid();
     if (!rs.week) rs.week = rsMonday(new Date());
     const root = document.createElement('div'); root.id = 'uxa-rs';
     root.innerHTML = '<div class="uxa-rs-top"><span class="uxa-rs-title">Resource Schedule</span>'
@@ -4739,15 +4796,21 @@
       + '<label class="uxa-rs-ck"><input type="checkbox" data-opt="weekends">Weekends</label>'
       + '<label class="uxa-rs-ck" title="Add calendar meetings to today and future days. Workamajig answers this slowly (up to a minute per person), so it fills in gradually."><input type="checkbox" data-opt="meetings">Include meetings</label>'
       + '<label class="uxa-rs-ck uxa-rs-filter" title="Show only the people in your saved Scheduling Users filter"' + (rs.filterKeys ? '' : ' hidden') + '><input type="checkbox" data-opt="useFilter">My Scheduling filter</label>'
-      + '<span class="uxa-rs-sp"></span><span class="uxa-rs-note" title="Each day shows hours against capacity (your Scheduling max hours per weekday). Past days show the time logged that day; today onward shows planned hours per day, the same way Workamajig’s staff tiles count them.">ⓘ How hours are counted</span>'
+      + '<span class="uxa-rs-sp"></span><span class="uxa-rs-note" title="Each day shows hours against capacity (your Scheduling max hours per weekday). Past days show the time logged that day; today onward shows planned hours per day, the same way Workamajig’s staff tiles count them.">ⓘ</span>'
+      + '<button type="button" class="uxa-rs-b uxa-rs-all" data-act="all" title="Collapse or expand every person\'s assignments">Collapse all</button>'
       + '<button type="button" class="uxa-rs-b" data-act="refresh" title="Reload this week">Refresh</button><button type="button" class="uxa-rs-b" data-act="close" title="Close (Esc)">✕ Close</button></div>'
       + '<div class="uxa-rs-body"></div>';
     root.querySelector('.uxa-rs-q').value = rs.q;
     root.querySelectorAll('input[data-opt]').forEach(c => { c.checked = !!rs[c.dataset.opt]; });
     root.addEventListener('click', e => {
+      // A bar opens the task's card details right here (the same modal as the board); Cmd/Ctrl-click still opens the
+      // assignment in a new tab.
+      const bar = e.target.closest('.uxa-rs-bar');
+      if (bar) { if (plainClick(e) && Number(bar.dataset.pk) > 0 && Number(bar.dataset.task) > 0) { e.preventDefault(); openTaskModalDetached(bar.dataset.pk, bar.dataset.task, bar.dataset.tuk, bar.dataset.u); } return; }
       const el = e.target.closest('[data-act]'); if (!el) return;
       const act = el.dataset.act;
       if (act === 'close') rsClose();
+      else if (act === 'all') { const ppl = rsPeople(), anyOpen = ppl.some(u => !rs.collapsed.has(u.UserKey)); ppl.forEach(u => { if (anyOpen) rs.collapsed.add(u.UserKey); else rs.collapsed.delete(u.UserKey); }); rsDraw(); }
       else if (act === 'prev') rsSetWeek(rsAdd(rs.week, -7));
       else if (act === 'next') rsSetWeek(rsAdd(rs.week, 7));
       else if (act === 'today') rsSetWeek(new Date());
@@ -4763,6 +4826,7 @@
   }
   function rsClose() {
     rs.open = false; rs.gen++;
+    if (board.detached) boardDetachEnd();
     document.removeEventListener('keydown', rsKey, true);
     const root = document.getElementById('uxa-rs'); if (root) root.remove();
   }
@@ -4779,7 +4843,7 @@
   function resourceScheduleTick() {
     let btn = document.getElementById('uxa-rs-btn');
     if (!resourceScheduleOn()) { if (btn) btn.remove(); if (rs.open) rsClose(); return; }
-    if (rs.open && !document.getElementById('uxa-rs')) rsClose();   // our view was removed from under us
+    if (rs.open && (!document.getElementById('uxa-rs') || aid() !== rs.aid)) rsClose();   // removed from under us, or the user navigated away
     const tb = aid() === RS_AID ? rsHeader() : null;
     if (!tb) { if (btn) btn.remove(); return; }
     if (btn && tb.contains(btn)) return;
