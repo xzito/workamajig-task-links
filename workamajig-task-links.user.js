@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.6';
+  const VERSION = '0.99.7';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -4900,6 +4900,7 @@
       + '.uxa-rs-bar.zero{opacity:.5}'
       + '.uxa-rs-track{min-height:' + (RS_BAR + 2 * RS_GAP) + 'px}'
       + '.uxa-rs-none{position:absolute;left:10px;top:0;bottom:0;display:flex;align-items:center;color:#aeb4bf;font-size:12px;font-style:italic;pointer-events:none}'
+      + '#uxa-rs .uxa-rs-h{position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;z-index:1;pointer-events:auto;display:block}.uxa-rs-h.l{left:0}.uxa-rs-h.r{right:0}.uxa-rs-h:hover{background:rgba(0,0,0,.18)}'
       + '.uxa-rs-track.alloc{cursor:cell}.uxa-rs-bar.drag{cursor:grab}.uxa-rs-bar.dragging{cursor:grabbing;opacity:.85;z-index:2;box-shadow:0 6px 16px rgba(20,30,50,.3)}'
       + '.uxa-rs-dlgbg{position:absolute;inset:0;z-index:8;background:rgba(20,20,20,.4);display:flex;align-items:flex-start;justify-content:center;padding:9vh 16px}'
       + '.uxa-rs-dlg{width:520px;max-width:100%;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(20,30,50,.3);padding:20px 22px}'
@@ -4993,13 +4994,15 @@
         tasks.forEach((x, i) => {
           const t = x.t, st = rs.status.get(t.TaskUserStatusKey) || { color: '#7a8aa0', name: '' }, dh = x.dh >= 0.05 ? x.dh : 0;
           const proj = (t.ProjectNumber ? t.ProjectNumber + ' · ' : '') + (t.ProjectName || '');
-          // Draggable only when the whole assignment is on screen (so the bar's ends ARE its dates) and we may write.
+          // Any assignment can be dragged sideways to shift it (even one that runs off the edge of the weeks shown);
+          // an end that is on screen also gets a handle to stretch or shorten the assignment from that side.
           const rsd = rsDate(t.APlanStart || t.PlanStart), red = rsDate(t.APlanComplete || t.PlanComplete);
-          const drag = canAlloc && Number(t.TaskUserKey) > 0 && rsd && red && rsd >= days[0] && red <= days[n - 1];
+          const drag = canAlloc && Number(t.TaskUserKey) > 0 && rsd && red;
+          const hl = drag && rsd >= days[0], hr = drag && red <= days[n - 1];
           const tip = (t.TaskName || '') + '\n' + (t.ProjectFullName || proj) + (st.name ? '\nStatus: ' + st.name : '')
             + '\n' + String(t.APlanStart || t.PlanStart || '').slice(0, 10) + ' → ' + String(t.APlanComplete || t.PlanComplete || '').slice(0, 10)
             + '\nPlanned ' + rsNum(+t.Hours || 0) + ' h · logged ' + rsNum(+t.ActualHours || 0) + ' h · ' + (+t.PercComp || 0) + '% complete' + (dh ? '\n' + rsNum(dh) + ' h allocated in the weeks shown' : '');
-          bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}${drag ? ' drag' : ''}"${drag ? ` data-drag="1" data-first="${x.first}" data-last="${x.last}"` : ''} draggable="false" data-pk="${Number(t.ProjectKey) || 0}" data-task="${Number(t.TaskKey) || 0}" data-tuk="${Number(t.TaskUserKey) || 0}" data-u="${u.UserKey}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * rowH + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}"><span><b>${esc(t.TaskName || 'Task')}</b><small>${esc(proj)}</small></span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}</a>`;
+          bars += `<a class="uxa-rs-bar${dh ? '' : ' zero'}${drag ? ' drag' : ''}"${drag ? ` data-drag="1" data-first="${x.first}" data-last="${x.last}" data-s="${rsYmd(rsd)}" data-e="${rsYmd(red)}"` : ''} draggable="false" data-pk="${Number(t.ProjectKey) || 0}" data-task="${Number(t.TaskKey) || 0}" data-tuk="${Number(t.TaskUserKey) || 0}" data-u="${u.UserKey}" href="${esc(urls.assignment(t.TaskUserKey))}" target="_blank" rel="noopener" title="${esc(tip)}" style="left:calc(${(x.first / n * 100).toFixed(4)}% + 2px);width:calc(${((x.last - x.first + 1) / n * 100).toFixed(4)}% - 4px);top:${i * rowH + RS_GAP}px;background:${esc(st.color)};color:${rsInk(st.color)}">${hl ? '<i class="uxa-rs-h l" data-h="l"></i>' : ''}<span><b>${esc(t.TaskName || 'Task')}</b><small>${esc(proj)}</small></span>${dh ? '<em>' + rsNum(dh) + 'h</em>' : ''}${hr ? '<i class="uxa-rs-h r" data-h="r"></i>' : ''}</a>`;
         });
         const none = recs.every(r => r) && !tasks.length ? '<div class="uxa-rs-none">No assignments' + (q || rs.plannedOnly || fOn ? ' match' : (weeks.length > 1 ? ' in these weeks' : ' this week')) + (canAlloc ? ' \u2014 click a day to allocate' : '') + '</div>' : '';
         track = `<div class="uxa-rs-track${canAlloc ? ' alloc' : ''}" data-u="${u.UserKey}"${canAlloc ? ' title="Click a blank day to allocate"' : ''} style="height:${Math.max(tasks.length, 1) * rowH + RS_GAP}px">${cols}${bars}${none}</div>`;
@@ -5115,32 +5118,53 @@
     };
     document.addEventListener('mousemove', move, true); document.addEventListener('mouseup', up, true);
   }
-  // ---- drag a bar sideways to reschedule that assignment (snaps to day columns) ----
+  // ---- drag a bar to reschedule that assignment (snaps to day columns) ----
+  // Drag the body to shift the whole assignment by that many days; drag an end handle to move just that end. With
+  // weekends hidden a column is a working day, so a shift skips Saturdays and Sundays.
+  function rsShiftYmd(ymd, k) {
+    const d = rsDate(ymd), step = k < 0 ? -1 : 1;
+    for (let left = Math.abs(k); left > 0;) { d.setDate(d.getDate() + step); if (rs.weekends || (d.getDay() !== 0 && d.getDay() !== 6)) left--; }
+    return rsYmd(d);
+  }
   function rsDragStart(e) {
     const bar = e.target.closest && e.target.closest('.uxa-rs-bar[data-drag]');
     if (!bar || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || rs.drag) return;
     const n = rs.vdays.length, colW = bar.parentElement.getBoundingClientRect().width / n;
     const first = Number(bar.dataset.first), last = Number(bar.dataset.last);
+    const hEl = e.target.closest('.uxa-rs-h'), mode = hEl ? hEl.dataset.h : 'm';   // 'm' move, 'l' start, 'r' end
+    const w0 = bar.getBoundingClientRect().width;
     const d = rs.drag = { x0: e.clientX, delta: 0, moved: false };
+    e.preventDefault();
     const move = ev => {
       const dx = ev.clientX - d.x0;
       if (!d.moved && Math.abs(dx) < 5) return;
-      d.moved = true; d.delta = Math.max(-first, Math.min(n - 1 - last, Math.round(dx / colW)));
-      bar.classList.add('dragging'); bar.style.transform = 'translateX(' + (d.delta * colW) + 'px)';
+      d.moved = true;
+      let k = Math.round(dx / colW);
+      if (mode === 'l') k = Math.max(-first, Math.min(last - first, k));          // start stays on screen and on/before the end
+      else if (mode === 'r') k = Math.max(first - last, Math.min(n - 1 - last, k)); // end stays on screen and on/after the start
+      else k = Math.max(-n, Math.min(n, k));
+      d.delta = k; bar.classList.add('dragging');
+      if (mode === 'm') bar.style.transform = 'translateX(' + (k * colW) + 'px)';
+      else if (mode === 'r') bar.style.width = Math.max(colW - 4, w0 + k * colW) + 'px';
+      else { bar.style.transform = 'translateX(' + (k * colW) + 'px)'; bar.style.width = Math.max(colW - 4, w0 - k * colW) + 'px'; }
     };
     const up = () => {
       document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true);
       rs.drag = null; bar.classList.remove('dragging');
       if (d.moved) { rs.justDragged = true; setTimeout(() => { rs.justDragged = false; }, 80); }   // swallow the click that follows
-      if (d.moved && d.delta) rsDragSave(bar, rsYmd(rs.vdays[first + d.delta]), rsYmd(rs.vdays[last + d.delta]));
-      else { bar.style.transform = ''; if (rs.redraw) { rs.redraw = false; rsDrawSoon(); } }
+      if (d.moved && d.delta) {
+        const k = d.delta;
+        const ns = mode === 'r' ? bar.dataset.s : (mode === 'l' ? rsYmd(rs.vdays[first + k]) : rsShiftYmd(bar.dataset.s, k));
+        const ne = mode === 'l' ? bar.dataset.e : (mode === 'r' ? rsYmd(rs.vdays[last + k]) : rsShiftYmd(bar.dataset.e, k));
+        rsDragSave(bar, ns, ne);
+      } else { bar.style.transform = ''; bar.style.width = ''; if (rs.redraw) { rs.redraw = false; rsDrawSoon(); } rsDraw(); }
     };
     document.addEventListener('mousemove', move, true); document.addEventListener('mouseup', up, true);
   }
   async function rsDragSave(bar, startYmd, endYmd) {
     const userKey = Number(bar.dataset.u), nice = y => rsDate(y).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    toast('Moving…');
-    try { await saveAssignmentDates(bar.dataset.pk, bar.dataset.tuk, startYmd, endYmd); toast('Moved to ' + nice(startYmd) + (endYmd !== startYmd ? ' \u2013 ' + nice(endYmd) : '')); }
+    toast('Saving…');
+    try { await saveAssignmentDates(bar.dataset.pk, bar.dataset.tuk, startYmd, endYmd); toast('Now ' + nice(startYmd) + (endYmd !== startYmd ? ' – ' + nice(endYmd) : '')); }
     catch (e) { toast('Could not move it: ' + ((e && e.message) || e)); }
     rs.redraw = false;
     await rsReloadUser(userKey);
