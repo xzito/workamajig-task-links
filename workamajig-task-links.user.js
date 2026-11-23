@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.7';
+  const VERSION = '0.99.8';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -1729,6 +1729,8 @@
     if (!t) throw new Error('the task no longer exists; reload');
     const alone = (sched.projectTaskUserData || []).filter(x => x.TaskKey === tu.TaskKey).length === 1;
     const ts = String(t.PlanStart || '').slice(0, 10), te = String(t.PlanComplete || '').slice(0, 10);
+    // exactly what we are about to change, so the move can be undone (restoreAssignmentDates)
+    const before = { taskStart: t.PlanStart, taskEnd: t.PlanComplete, taskDuration: t.PlanDuration, aStart: tu.APlanStart || null, aEnd: tu.APlanComplete || null };
     const tasksUpd = [], tuUpd = [];
     if (alone && !tu.APlanStart && !tu.APlanComplete) { schedSetTaskSpan(t, startYmd, endYmd); tasksUpd.push(t); }
     else {
@@ -1737,6 +1739,29 @@
       if (ns !== ts || ne !== te) { schedSetTaskSpan(t, ns, ne); tasksUpd.push(t); }
     }
     await schedSave(projectKey, project, sched, tasksUpd, [], tuUpd, []);
+    return before;
+  }
+  // Undo a saveAssignmentDates: put the task's span and the assignment's own dates back exactly as they were (the
+  // `before` it returned). Only rows that actually differ are sent.
+  async function restoreAssignmentDates(projectKey, taskUserKey, before) {
+    projectKey = Number(projectKey); taskUserKey = Number(taskUserKey);
+    const init = await call('Modules.Projects.Schedule', 'initSchedule', { loaded: true, ProjectKey: projectKey });
+    const project = init.project;
+    if (!project || !project.ProjectKey) throw new Error('could not load the project');
+    if (project.ScheduleLockedByKey) throw new Error('the schedule is currently locked for editing');
+    const sched = await schedRead(projectKey);
+    const tu = (sched.projectTaskUserData || []).find(x => x.TaskUserKey === taskUserKey);
+    if (!tu) throw new Error('this assignment no longer exists; reload');
+    const t = (sched.tasks || []).find(x => x.TaskKey === tu.TaskKey);
+    if (!t) throw new Error('the task no longer exists; reload');
+    const tasksUpd = [], tuUpd = [], d10 = v => String(v || '').slice(0, 10);
+    if (d10(t.PlanStart) !== d10(before.taskStart) || d10(t.PlanComplete) !== d10(before.taskEnd)) {
+      t.PlanStart = before.taskStart; t.PlanComplete = before.taskEnd; t.PlanDuration = before.taskDuration; t.rowstate = 'US'; tasksUpd.push(t);
+    }
+    if (d10(tu.APlanStart) !== d10(before.aStart) || d10(tu.APlanComplete) !== d10(before.aEnd)) {
+      tu.APlanStart = before.aStart; tu.APlanComplete = before.aEnd; tu.rowstate = 'US'; tuUpd.push(tu);
+    }
+    if (tasksUpd.length || tuUpd.length) await schedSave(projectKey, project, sched, tasksUpd, [], tuUpd, []);
     return true;
   }
 
@@ -4647,6 +4672,7 @@
     q: '', plannedOnly: false, weekends: false, useFilter: true, meetings: false, calBusy: false, sort: 'name', span: 2,   // span = weeks shown side by side (1 or 2)
     f: { me: false, client: new Set(), project: new Set(), owner: new Set(), role: new Set(), status: new Set() },   // Filter menu picks
     fl: {}, fmenu: null,
+    undo: null, undoTimer: 0,                      // the last drag, while its Undo bar is showing
     vdays: [], alloc: null, drag: null, justDragged: false, redraw: false,   // visible day columns; open allocate form; bar drag                           // fl = labels of picked values (for chips); fmenu = null | 'root' | category
     collapsed: new Set(), gen: 0, raf: 0
   };
@@ -4901,6 +4927,9 @@
       + '.uxa-rs-track{min-height:' + (RS_BAR + 2 * RS_GAP) + 'px}'
       + '.uxa-rs-none{position:absolute;left:10px;top:0;bottom:0;display:flex;align-items:center;color:#aeb4bf;font-size:12px;font-style:italic;pointer-events:none}'
       + '#uxa-rs .uxa-rs-h{position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;z-index:1;pointer-events:auto;display:block}.uxa-rs-h.l{left:0}.uxa-rs-h.r{right:0}.uxa-rs-h:hover{background:rgba(0,0,0,.18)}'
+      + '.uxa-rs-undo{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:7;display:flex;align-items:center;gap:12px;max-width:80%;padding:10px 10px 10px 16px;border-radius:10px;background:#1f2d3d;color:#fff;font-size:13px;box-shadow:0 10px 30px rgba(20,30,50,.35)}'
+      + '.uxa-rs-undo span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+      + '.uxa-rs-undo button{font:inherit;cursor:pointer;border:0;border-radius:6px;padding:6px 12px;background:#7ab51d;color:#fff;font-weight:700}.uxa-rs-undo button[data-act="undoX"]{background:none;color:#b8c2cf;padding:6px 8px;font-size:16px;line-height:1}.uxa-rs-undo button[disabled]{opacity:.6;cursor:default}'
       + '.uxa-rs-track.alloc{cursor:cell}.uxa-rs-bar.drag{cursor:grab}.uxa-rs-bar.dragging{cursor:grabbing;opacity:.85;z-index:2;box-shadow:0 6px 16px rgba(20,30,50,.3)}'
       + '.uxa-rs-dlgbg{position:absolute;inset:0;z-index:8;background:rgba(20,20,20,.4);display:flex;align-items:flex-start;justify-content:center;padding:9vh 16px}'
       + '.uxa-rs-dlg{width:520px;max-width:100%;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(20,30,50,.3);padding:20px 22px}'
@@ -5162,12 +5191,36 @@
     document.addEventListener('mousemove', move, true); document.addEventListener('mouseup', up, true);
   }
   async function rsDragSave(bar, startYmd, endYmd) {
-    const userKey = Number(bar.dataset.u), nice = y => rsDate(y).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    toast('Saving…');
-    try { await saveAssignmentDates(bar.dataset.pk, bar.dataset.tuk, startYmd, endYmd); toast('Now ' + nice(startYmd) + (endYmd !== startYmd ? ' – ' + nice(endYmd) : '')); }
-    catch (e) { toast('Could not move it: ' + ((e && e.message) || e)); }
+    const userKey = Number(bar.dataset.u), pk = bar.dataset.pk, tuk = bar.dataset.tuk;
+    const name = ((bar.querySelector('b') || {}).textContent || 'Assignment').trim();
+    const nice = y => rsDate(y).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    rsUndoHide(); toast('Saving…');
+    try {
+      const before = await saveAssignmentDates(pk, tuk, startYmd, endYmd);
+      rsUndoShow({ pk, tuk, userKey, before }, '“' + name + '” is now ' + nice(startYmd) + (endYmd !== startYmd ? ' – ' + nice(endYmd) : ''));
+    } catch (e) { toast('Could not move it: ' + ((e && e.message) || e)); }
     rs.redraw = false;
     await rsReloadUser(userKey);
+    rsDraw();
+  }
+  // After a drag: a bar at the bottom of the view with Undo, for 15 seconds (or until the next drag / closing the view).
+  function rsUndoHide() { clearTimeout(rs.undoTimer); rs.undo = null; const el = document.querySelector('#uxa-rs .uxa-rs-undo'); if (el) el.remove(); }
+  function rsUndoShow(u, text) {
+    const root = document.getElementById('uxa-rs'); if (!root) return;
+    rsUndoHide(); rs.undo = u;
+    const el = document.createElement('div'); el.className = 'uxa-rs-undo'; el.setAttribute('role', 'status');
+    el.innerHTML = '<span></span><button type="button" data-act="undo">Undo</button><button type="button" data-act="undoX" title="Dismiss" aria-label="Dismiss">×</button>';
+    el.firstChild.textContent = text;
+    root.appendChild(el);
+    rs.undoTimer = setTimeout(rsUndoHide, 15000);
+  }
+  async function rsUndoRun() {
+    const u = rs.undo; if (!u || u.busy) return;
+    u.busy = true; clearTimeout(rs.undoTimer);
+    const el = document.querySelector('#uxa-rs .uxa-rs-undo'); if (el) { el.firstChild.textContent = 'Undoing…'; el.querySelectorAll('button').forEach(b => { b.disabled = true; }); }
+    try { await restoreAssignmentDates(u.pk, u.tuk, u.before); rsUndoHide(); toast('Move undone'); }
+    catch (e) { rsUndoHide(); toast('Could not undo: ' + ((e && e.message) || e)); }
+    await rsReloadUser(u.userKey);
     rsDraw();
   }
   function rsSetWeek(d) { rs.week = rsMonday(d); rs.gen++; rsQueue(); rsDraw(); }
@@ -5212,6 +5265,8 @@
       }
       const act = el.dataset.act;
       if (act === 'close') rsClose();
+      else if (act === 'undo') rsUndoRun();
+      else if (act === 'undoX') rsUndoHide();
       else if (act === 'allocSave') rsAllocSave();
       else if (act === 'allocCancel') rsAllocClose();
       else if (act === 'fopen') { rs.fmenu = rs.fmenu ? null : 'root'; rsDrawPop(); }
@@ -5254,7 +5309,7 @@
     if (rs.staff && rs.staff.length) rsQueue(); else { rs.staff = null; rsLoadStaff(); }
   }
   function rsClose() {
-    rs.open = false; rs.gen++; rs.alloc = null; rs.drag = null;
+    rs.open = false; rs.gen++; rs.alloc = null; rs.drag = null; clearTimeout(rs.undoTimer); rs.undo = null;
     if (board.detached) boardDetachEnd();
     document.removeEventListener('keydown', rsKey, true);
     const root = document.getElementById('uxa-rs'); if (root) root.remove();
