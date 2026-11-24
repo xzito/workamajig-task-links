@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.8';
+  const VERSION = '0.99.9';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -5341,6 +5341,90 @@
     if (sp) sp.insertAdjacentElement('afterend', btn); else tb.appendChild(btn);
   }
 
+  // ---------- Conversation screen: link the task, and the places the thread belongs to ----------
+  // The native thread screen (projects.diary.thread) prints "Task 1.7 - Name" as plain text. We turn the task name into
+  // a link to its assignment (yours if you have one, otherwise the first; the schedule row when nobody is assigned) and
+  // add a small row of links to where the thread lives: the task's assignment, its schedule row, the project's
+  // conversations, and the first post when this screen was opened on a reply. Read-only.
+  const TL_AID = 'projects.diary.thread';
+  function threadLinksOn() { return true; }
+  const tlCache = new Map();                       // ActivityKey -> Promise<info|null>
+  function tlInfo(key) {
+    if (!tlCache.has(key)) {
+      tlCache.set(key, (async () => {
+        const d = await call('Modules.Projects.Production', 'loadThread', { loaded: true, ActivityKey: Number(key), LinkedProjectKey: null, loadWebDav: 0 });
+        const row = (d.thread || [])[0] || d.activityFavorite;
+        const r = Array.isArray(row) ? row[0] : row;
+        if (!r || !(Number(r.ProjectKey) > 0)) return null;
+        const info = { pk: Number(r.ProjectKey), tk: Number(r.TaskKey) || 0, root: Number(r.RootActivityKey) || Number(key), tuk: 0 };
+        if (info.tk) {
+          try {
+            const slots = (await getSchedule(info.pk)).slots.get(info.tk) || [];
+            const me = Number(window.System && System.user && System.user.userKey) || 0;
+            const s = slots.find(x => Number(x.userKey) === me) || slots[0];
+            if (s) info.tuk = Number(s.taskUserKey) || 0;
+          } catch (e) {}
+        }
+        return info;
+      })().catch(() => { tlCache.delete(key); return null; }));
+    }
+    return tlCache.get(key);
+  }
+  function ensureTlStyle() {
+    if (document.getElementById('uxa-tl-style')) return;
+    const st = document.createElement('style'); st.id = 'uxa-tl-style';
+    st.textContent = '.uxa-tl-a{color:#12a5b8;text-decoration:none;cursor:pointer}.uxa-tl-a:hover{text-decoration:underline}' +
+      '.uxa-tl-row{font-size:12px;padding-top:4px;color:#888}.uxa-tl-row .uxa-tl-a+.uxa-tl-a::before{content:"\\00b7";color:#bbb;margin:0 7px;display:inline-block;text-decoration:none}';
+    document.head.appendChild(st);
+  }
+  function tlClick(e) {
+    const a = e.target.closest && e.target.closest('a.uxa-tl-a');
+    if (!a || !plainClick(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    const d = a.dataset;
+    if (d.go === 'asg') openApp('projects.production.assignment', Number(d.k));
+    else if (d.go === 'task') { try { sessionStorage.setItem(SS_KEY, String(d.tk)); } catch (err) {} openApp('projects.schedule.edit2', Number(d.k)); }
+    else if (d.go === 'convs') openApp('projects.diary.dash', Number(d.k));
+    else if (d.go === 'root') openApp(TL_AID, Number(d.k));
+  }
+  function threadLinksTick() {
+    const pg = document.querySelector('page.open[data-aid="' + TL_AID + '"]');
+    if (!pg) return;
+    if (!threadLinksOn()) {
+      pg.querySelectorAll('.uxa-tl-row').forEach(n => n.remove());
+      pg.querySelectorAll('[data-uxa-tl]').forEach(n => { n.textContent = n.dataset.uxaTl; n.removeAttribute('data-uxa-tl'); });
+      return;
+    }
+    const rb = pg.querySelector('header [data-action="reply"][data-key]');
+    const key = rb && Number(rb.dataset.key);
+    if (!(key > 0)) return;
+    const lines = [...pg.querySelectorAll('#lstDiary li div.pad-b-s.pad-t-m')].filter(n => !n.dataset.uxaTl && !n.children.length && /^Task\s+\S/.test(n.textContent.trim()));
+    if (!lines.length || pg.uxaTlBusy) return;
+    pg.uxaTlBusy = true;
+    tlInfo(key).then(info => {
+      pg.uxaTlBusy = false;
+      if (!info || !info.tk || !pg.isConnected) return;
+      ensureTlStyle();
+      if (!pg.uxaTlClick) { pg.uxaTlClick = true; pg.addEventListener('click', tlClick, true); }
+      const main = info.tuk ? { go: 'asg', k: info.tuk, href: urls.assignment(info.tuk), tip: 'Open the assignment' }
+        : { go: 'task', k: info.pk, href: urls.task(info.pk, info.tk), tip: 'Show this task in the schedule' };
+      const link = (o, text) => { const a = document.createElement('a'); a.className = 'uxa-tl-a'; a.href = o.href; a.title = o.tip || ''; a.dataset.go = o.go; a.dataset.k = o.k; a.dataset.tk = info.tk; a.textContent = text; return a; };
+      lines.forEach(n => {
+        if (n.dataset.uxaTl || !n.isConnected) return;
+        const full = n.textContent.trim();
+        n.dataset.uxaTl = full;
+        n.textContent = 'Task ';
+        n.appendChild(link(main, full.replace(/^Task\s+/, '')));
+        const row = document.createElement('div'); row.className = 'uxa-tl-row';
+        if (info.tuk) row.appendChild(link(main, 'Open assignment'));
+        row.appendChild(link({ go: 'task', k: info.pk, href: urls.task(info.pk, info.tk), tip: 'Show this task in the schedule' }, 'Show in schedule'));
+        row.appendChild(link({ go: 'convs', k: info.pk, href: BASE + '?aid=projects.diary.dash&k=' + info.pk, tip: 'All conversations on this project' }, 'Project conversations'));
+        if (info.root && info.root !== key) row.appendChild(link({ go: 'root', k: info.root, href: urls.thread(info.root), tip: 'Open the thread from its first post' }, 'Full thread'));
+        n.appendChild(row);
+      });
+    });
+  }
+
   function tick() {
     if (location.href !== lastHref) {
       lastHref = location.href;
@@ -5370,6 +5454,7 @@
     noteBreaksTick();
     timeGroupTick();
     resourceScheduleTick();
+    threadLinksTick();
   }
   function start() {
     if (window.__uxaT) return; // another instance is already handling this page; don't double-run
