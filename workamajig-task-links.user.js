@@ -21,7 +21,7 @@
   // string the native schedule screen uses for getSchedule (captured live), so our reads are indistinguishable from a
   // normal schedule refresh in those logs rather than announcing a third-party tool.
   const SCHED_APP = 'scheduleEdit getSchedule';
-  const VERSION = '0.99.9';
+  const VERSION = '0.99.10';
   // Presence marker (neutral, no brand) so a second injected copy stands down. Not a product tell in Workamajig's DOM.
   window.__uxaV = VERSION;
 
@@ -585,7 +585,9 @@
       // Hide the empty row-action gutter (grid-row-header: edit/delete/select indicators) on these read-mostly views —
       // it's the narrow blank first column the frame was boxing. The group chevron is in grid-cell.dgTree, not here, so
       // collapse still works. Scoped to the target grids only (the schedule keeps its gutter, where those actions matter).
-      + each('grid-row-header') + '{display:none !important}'
+      // Hide only the LEFT indicators (edit toggle, select): grid-row-header is a full-width overlay that also holds the
+      // hover trash icon at the right (grid-indicator.row-delete), so hiding the whole header removed "delete time entry".
+      + each('grid-row-header grid-indicator:not(.row-delete)') + '{display:none !important}'
       // ...and reclaim the gap it left: WMJ's `datagrid.showindicator > grid-row.main` rule reserves 40px of row
       // padding-left for that indicator, which stays even with the element hidden. Zero it (id-scoped + !important beats
       // WMJ's class rule) so the rows sit flush to the table's left border instead of leaving a blank 40px column.
